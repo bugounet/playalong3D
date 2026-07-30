@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080b10" />
+    <meta
+      name="description"
+      content="Playalong 3D — apprenez le piano avec vos fichiers MIDI."
+    />
+    <title>Playalong 3D</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #080b10;
+      }
+
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        color: #eef4f8;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(190, 239, 71, 0.09), transparent 28%),
+          linear-gradient(145deg, #0b1117, #06090d);
+        font-family: Inter, "Segoe UI", Arial, sans-serif;
+      }
+
+      .boot-content {
+        display: flex;
+        width: min(310px, calc(100vw - 48px));
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .boot-logo {
+        display: grid;
+        width: 68px;
+        height: 68px;
+        place-items: center;
+        color: #0b100d;
+        background: #c7f35a;
+        border-radius: 20px 10px 20px 10px;
+        box-shadow: 0 0 52px rgba(190, 239, 71, 0.2);
+        font-size: 31px;
+        font-weight: 900;
+      }
+
+      .boot-title {
+        margin-top: 19px;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+      }
+
+      .boot-title b {
+        margin-left: 4px;
+        color: #c7f35a;
+        font-size: 10px;
+        vertical-align: top;
+      }
+
+      .boot-track {
+        width: 100%;
+        height: 3px;
+        margin-top: 29px;
+        overflow: hidden;
+        background: #1d2730;
+        border-radius: 999px;
+      }
+
+      .boot-track::after {
+        display: block;
+        width: 72%;
+        height: 100%;
+        background: linear-gradient(90deg, #8fc33c, #d4ff6c);
+        border-radius: inherit;
+        box-shadow: 0 0 12px rgba(199, 243, 90, 0.45);
+        animation: boot-progress 2.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        content: "";
+      }
+
+      .boot-status {
+        margin-top: 10px;
+        color: #64717c;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      @keyframes boot-progress {
+        from { width: 8%; }
+        to { width: 72%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="boot-splash" role="status" aria-label="Chargement de Playalong 3D">
+        <div class="boot-content">
+          <div class="boot-logo">♪</div>
+          <div class="boot-title">PLAYALONG<b>3D</b></div>
+          <div class="boot-track"></div>
+          <div class="boot-status">Chargement du moteur musical…</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
