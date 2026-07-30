@@ -4,6 +4,7 @@ import {
   Gauge,
   Hand,
   KeyboardMusic,
+  Languages,
   Layers3,
   LoaderCircle,
   Maximize2,
@@ -38,9 +39,14 @@ import { PianoStage } from "./components/PianoStage";
 import { useMidiInput } from "./hooks/useMidiInput";
 import { usePianoSynth } from "./hooks/usePianoSynth";
 import {
+  LANGUAGES,
+  getInitialLanguage,
+  translate,
+  type Language,
+} from "./i18n";
+import {
   annotateForPractice,
   createDemoSong,
-  noteName,
   parseMidiFile,
 } from "./lib/music";
 import {
@@ -88,20 +94,10 @@ interface LoopFeedback {
   detail: string;
 }
 
-function describeKeyboard(keyCount: number) {
-  const commonFormats: Record<number, string> = {
-    25: "Mini-clavier 25 touches",
-    32: "Clavier 32 touches",
-    37: "Clavier 37 touches",
-    44: "Clavier 44 touches",
-    49: "Clavier 49 touches",
-    54: "Clavier 54 touches",
-    61: "Clavier 61 touches",
-    73: "Clavier 73 touches",
-    76: "Clavier 76 touches",
-    88: "Piano 88 touches",
-  };
-  return commonFormats[keyCount] ?? `Clavier ${keyCount} touches`;
+function describeKeyboard(keyCount: number, language: Language) {
+  if (keyCount === 25) return translate(language, "keyboard.mini");
+  if (keyCount === 88) return translate(language, "keyboard.piano88");
+  return translate(language, "keyboard.generic", { count: keyCount });
 }
 
 const COMPUTER_KEYS: Record<string, number> = {
@@ -140,17 +136,16 @@ function groupOnsets(notes: PracticeNote[]) {
   return Array.from(groups.values()).sort((a, b) => a[0].time - b[0].time);
 }
 
-function trackHandLabel(hint: HandHint) {
-  if (hint === "left") return "G";
-  if (hint === "right") return "D";
-  if (hint === "both") return "2M";
-  return "Auto";
-}
-
 export default function App() {
+  const [language, setLanguage] = useState<Language>(() => getInitialLanguage());
+  const t = useCallback(
+    (key: string, variables: Record<string, string | number> = {}) =>
+      translate(language, key, variables),
+    [language],
+  );
   const [showSplash, setShowSplash] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(72);
-  const [loadingStatus, setLoadingStatus] = useState("Initialisation de la scène 3D…");
+  const [loadingStatusKey, setLoadingStatusKey] = useState("loading.scene");
   const [song, setSong] = useState<SongData>(() => createDemoSong());
   const [tracks, setTracks] = useState<TrackInfo[]>(song.tracks);
   const [handMode, setHandMode] = useState<HandMode>("both");
@@ -212,20 +207,26 @@ export default function App() {
     const stages = [
       window.setTimeout(() => {
         setLoadingProgress(84);
-        setLoadingStatus("Préparation du moteur MIDI…");
+        setLoadingStatusKey("loading.midi");
       }, 120),
       window.setTimeout(() => {
         setLoadingProgress(94);
-        setLoadingStatus("Calcul des premiers doigtés…");
+        setLoadingStatusKey("loading.fingering");
       }, 360),
       window.setTimeout(() => {
         setLoadingProgress(100);
-        setLoadingStatus("Prêt");
+        setLoadingStatusKey("loading.ready");
       }, 650),
       window.setTimeout(() => setShowSplash(false), 920),
     ];
     return () => stages.forEach((timer) => window.clearTimeout(timer));
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("playalong3d-language", language);
+    document.documentElement.lang = language;
+    document.title = "Playalong 3D";
+  }, [language]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -347,7 +348,7 @@ export default function App() {
         .filter((note) => note.trackId === trackId)
         .sort((a, b) => a.time - b.time || a.midi - b.midi);
       if (trackNotes.length === 0) {
-        showNotice("Cette piste ne contient aucune note à écouter.");
+        showNotice(t("notice.noPreview"));
         return;
       }
 
@@ -389,6 +390,7 @@ export default function App() {
       stopAll,
       stopTrackPreview,
       tap,
+      t,
     ],
   );
 
@@ -431,27 +433,27 @@ export default function App() {
       setLoopFeedback({
         passed: true,
         score: precision,
-        title: "Excellent, palier réussi !",
-        detail: `Précision ${precision}/100 · passage au tempo ${nextTempo} %.`,
+        title: t("notice.loopPassed"),
+        detail: t("notice.loopNext", { score: precision, tempo: nextTempo }),
       });
     } else if (passed) {
       setLoopFeedback({
         passed: true,
         score: precision,
-        title: "Boucle maîtrisée à 100 % !",
-        detail: `Précision ${precision}/100 · vous maîtrisez ce passage au tempo réel.`,
+        title: t("notice.loopMastered"),
+        detail: t("notice.loopMasteredDetail", { score: precision }),
       });
     } else {
       setLoopFeedback({
         passed: false,
         score: precision,
-        title: "Encore un effort",
-        detail: `Précision ${precision}/100 · objectif 95, recommencez au même tempo.`,
+        title: t("notice.loopRetry"),
+        detail: t("notice.loopRetryDetail", { score: precision }),
       });
     }
     window.setTimeout(() => setLoopFeedback(null), 3800);
     resetAttempt(loopStart, true);
-  }, [loopStart, resetAttempt, tempoPercent]);
+  }, [loopStart, resetAttempt, t, tempoPercent]);
 
   const finishPerformance = useCallback(() => {
     const finalScore = { ...scoreRef.current };
@@ -749,7 +751,7 @@ export default function App() {
         }
 
         if (discoveryLowNote === null || event.note <= discoveryLowNote) {
-          showNotice("La touche aiguë doit être plus haute que la touche grave.");
+          showNotice(t("notice.highMustBeHigher"));
           return;
         }
 
@@ -758,7 +760,7 @@ export default function App() {
           lowNote: discoveryLowNote,
           highNote: event.note,
           keyCount,
-          label: describeKeyboard(keyCount),
+          label: describeKeyboard(keyCount, language),
         };
         setKeyboardCalibration(calibration);
         setDiscoveryStep("result");
@@ -784,10 +786,16 @@ export default function App() {
       registerNoteOff,
       registerNoteOn,
       showNotice,
+      language,
+      t,
     ],
   );
 
-  const midi = useMidiInput(handleMidiEvent);
+  const midi = useMidiInput(handleMidiEvent, {
+    defaultDevice: t("midi.defaultDevice"),
+    unsupported: t("midi.unsupported"),
+    denied: t("midi.denied"),
+  });
 
   useEffect(() => {
     if (!midi.connected || !midi.selectedId) return;
@@ -889,7 +897,7 @@ export default function App() {
     async (file?: File) => {
       if (!file) return;
       if (!/\.(mid|midi)$/i.test(file.name)) {
-        showNotice("Choisissez un fichier .mid ou .midi");
+        showNotice(t("notice.chooseMidi"));
         return;
       }
       setLoadingFile(true);
@@ -906,14 +914,14 @@ export default function App() {
         syncMetronome(0);
         setPlaying(false);
         setPlayhead(0);
-        showNotice(`${parsed.rawNotes.length} notes MIDI chargées`);
+        showNotice(t("notice.loaded", { count: parsed.rawNotes.length }));
       } catch {
-        showNotice("Ce fichier MIDI ne contient aucune piste lisible.");
+        showNotice(t("notice.emptyMidi"));
       } finally {
         setLoadingFile(false);
       }
     },
-    [showNotice, stopTrackPreview, syncAudioCursor, syncMetronome],
+    [showNotice, stopTrackPreview, syncAudioCursor, syncMetronome, t],
   );
 
   const toggleTrack = (trackId: number) => {
@@ -922,11 +930,11 @@ export default function App() {
       if (!target) return current;
       const selectedCount = current.filter((track) => track.selected).length;
       if (!target.selected && selectedCount >= 2) {
-        showNotice("Deux pistes maximum peuvent être travaillées ensemble.");
+        showNotice(t("notice.maxTracks"));
         return current;
       }
       if (target.selected && selectedCount === 1) {
-        showNotice("Gardez au moins une piste active.");
+        showNotice(t("notice.keepTrack"));
         return current;
       }
       return current.map((track) =>
@@ -968,7 +976,7 @@ export default function App() {
     setLoopEnabled(enabled);
     if (enabled) {
       setTempoPercent(50);
-      showNotice("Boucle progressive démarrée à 50 %");
+      showNotice(t("notice.loopStarted"));
     }
   };
 
@@ -989,6 +997,30 @@ export default function App() {
   ).length;
   const performanceMetrics = calculatePerformanceMetrics(score);
   const effectiveBpm = Math.round((song.bpm * tempoPercent) / 100);
+  const isDemoSong = song.name === "Gamme de Do — Démo";
+  const displaySongName = isDemoSong ? t("demo.song") : song.name;
+  const displayTrackName = (track: TrackInfo, index: number) => {
+    if (isDemoSong) return track.id === 0 ? t("demo.left") : t("demo.right");
+    return track.name || t("track.name", { number: index + 1 });
+  };
+  const displayInstrument = (track: TrackInfo) => {
+    if (isDemoSong) return t("demo.instrument");
+    return track.instrument || t("instrument.piano");
+  };
+  const displayHandHint = (hint: HandHint) => {
+    if (hint === "left") return t("hand.leftShort");
+    if (hint === "right") return t("hand.rightShort");
+    if (hint === "both") return t("hand.bothShort");
+    return t("hand.auto");
+  };
+  const tonalNotes = t("notes").split("|");
+  const localizedNoteName = (midi: number) =>
+    `${tonalNotes[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
+  const tonalLabel = tonalWindow
+    ? `${tonalNotes[tonalWindow.tonic]} ${t(
+        tonalWindow.mode === "major" ? "scale.major" : "scale.minor",
+      )}`
+    : `${tonalNotes[0]} ${t("scale.major")}`;
   const applyTempoBpm = (nextBpm: number) => {
     if (loopEnabled) return;
     const boundedBpm = Math.max(
@@ -1020,7 +1052,7 @@ export default function App() {
         <button
           className="icon-button mobile-menu"
           onClick={() => setSidebarOpen(true)}
-          aria-label="Ouvrir les réglages"
+          aria-label={t("top.openSettings")}
         >
           <Menu size={19} />
         </button>
@@ -1031,10 +1063,10 @@ export default function App() {
         <div className="song-summary">
           <div className="song-icon"><Music2 size={17} /></div>
           <div>
-            <strong>{song.name}</strong>
+            <strong>{displaySongName}</strong>
             <span>
               {song.bpm} BPM · {song.timeSignature.join("/")} ·{" "}
-              {practiceNotes.length} notes
+              {practiceNotes.length} {t("score.notes").toLowerCase()}
             </span>
           </div>
           <ChevronDown size={16} />
@@ -1047,7 +1079,7 @@ export default function App() {
                 <select
                   value={midi.selectedId}
                   onChange={(event) => midi.setSelectedId(event.target.value)}
-                  aria-label="Entrée MIDI"
+                  aria-label={t("top.midiInput")}
                 >
                   {midi.devices.map((device) => (
                     <option key={device.id} value={device.id}>
@@ -1066,38 +1098,58 @@ export default function App() {
                   setDiscoveryStep("low");
                   setDiscoveryOpen(true);
                 }}
-                title="Découvrir l’étendue du piano"
+                title={t("top.discoverRange")}
               >
                 <KeyboardMusic size={15} />
                 <span>
                   {keyboardCalibration
-                    ? `${keyboardCalibration.keyCount} touches`
-                    : "Découvrir"}
+                    ? t("top.keys", { count: keyboardCalibration.keyCount })
+                    : t("top.discover")}
                 </span>
               </button>
             </>
           ) : (
             <button className="midi-connect" onClick={midi.requestAccess}>
               <PlugZap size={17} />
-              <span>Connecter MIDI</span>
+              <span>{t("top.connectMidi")}</span>
             </button>
           )}
+          <label className="language-select" title={t("language.title")}>
+            <Languages size={15} />
+            <select
+              value={language}
+              onChange={(event) => setLanguage(event.target.value as Language)}
+              aria-label={t("language.title")}
+            >
+              {LANGUAGES.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <strong>{language.toUpperCase()}</strong>
+            <ChevronDown size={12} />
+          </label>
           <button
             className="icon-button"
-            aria-label="Ouvrir l’aide"
-            title="Aide"
+            aria-label={t("top.openHelp")}
+            title={t("top.help")}
             onClick={() => setHelpOpen(true)}
           >
             <CircleHelp size={19} />
           </button>
-          <button className="avatar" aria-label="Profil">SF</button>
+          <button className="avatar" aria-label={t("top.profile")}>SF</button>
         </div>
       </header>
 
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-mobile-head">
-          <strong>Réglages</strong>
-          <button className="icon-button" onClick={() => setSidebarOpen(false)}>
+          <strong>{t("sidebar.settings")}</strong>
+          <button
+            className="icon-button"
+            onClick={() => setSidebarOpen(false)}
+            aria-label={t("sidebar.close")}
+          >
             <X size={18} />
           </button>
         </div>
@@ -1113,21 +1165,21 @@ export default function App() {
             ) : (
               <Upload size={18} />
             )}
-            <span>{loadingFile ? "Analyse du MIDI…" : "Importer un MIDI"}</span>
+            <span>{loadingFile ? t("sidebar.importing") : t("sidebar.import")}</span>
           </button>
-          <small>ou déposez le fichier dans la fenêtre</small>
+          <small>{t("sidebar.drop")}</small>
         </section>
 
         <section className="control-section">
           <div className="section-title">
-            <span><Hand size={16} />Main à travailler</span>
+            <span><Hand size={16} />{t("sidebar.practiceHand")}</span>
           </div>
           <div className="segmented three">
             {(
               [
-                ["left", "Gauche"],
-                ["right", "Droite"],
-                ["both", "Les deux"],
+                ["left", t("hand.left")],
+                ["right", t("hand.right")],
+                ["both", t("hand.both")],
               ] as [HandMode, string][]
             ).map(([value, label]) => (
               <button
@@ -1143,7 +1195,7 @@ export default function App() {
 
         <section className="control-section">
           <div className="section-title">
-            <span><Gauge size={16} />Mode d’entraînement</span>
+            <span><Gauge size={16} />{t("sidebar.practiceMode")}</span>
           </div>
           <div className="mode-cards">
             <button
@@ -1151,7 +1203,7 @@ export default function App() {
               onClick={() => setPracticeMode("tempo")}
             >
               <span className="mode-icon"><Gauge size={18} /></span>
-              <span><strong>En rythme</strong><small>Le tempo continue</small></span>
+              <span><strong>{t("mode.tempo")}</strong><small>{t("mode.tempoHint")}</small></span>
               <i />
             </button>
             <button
@@ -1159,7 +1211,7 @@ export default function App() {
               onClick={() => setPracticeMode("wait")}
             >
               <span className="mode-icon"><Hand size={18} /></span>
-              <span><strong>Attendre la note</strong><small>Avance à votre rythme</small></span>
+              <span><strong>{t("mode.wait")}</strong><small>{t("mode.waitHint")}</small></span>
               <i />
             </button>
           </div>
@@ -1167,11 +1219,13 @@ export default function App() {
 
         <section className="control-section">
           <div className="section-title">
-            <span><Layers3 size={16} />Pistes MIDI</span>
+            <span><Layers3 size={16} />{t("sidebar.midiTracks")}</span>
             <em>{tracks.filter((track) => track.selected).length}/2</em>
           </div>
           <div className="track-list">
-            {tracks.slice(0, 8).map((track, index) => (
+            {tracks.slice(0, 8).map((track, index) => {
+              const trackLabel = displayTrackName(track, index);
+              return (
               <div
                 className={`track-row ${track.selected ? "selected" : ""} ${
                   previewTrackId === track.id ? "previewing" : ""
@@ -1181,27 +1235,30 @@ export default function App() {
                 <button
                   className="track-check"
                   onClick={() => toggleTrack(track.id)}
-                  aria-label={`${track.selected ? "Désactiver" : "Activer"} ${track.name}`}
+                  aria-label={t(
+                    track.selected ? "track.disable" : "track.enable",
+                    { name: trackLabel },
+                  )}
                 >
                   {track.selected && <span />}
                 </button>
                 <div className={`track-color color-${index % 4}`} />
                 <button className="track-main" onClick={() => toggleTrack(track.id)}>
-                  <strong>{track.name}</strong>
-                  <small>{track.instrument} · {track.noteCount} notes</small>
+                  <strong>{trackLabel}</strong>
+                  <small>{displayInstrument(track)} · {track.noteCount} {t("score.notes").toLowerCase()}</small>
                 </button>
                 <button
                   className="track-preview"
                   onClick={() => previewTrack(track.id)}
                   aria-label={
                     previewTrackId === track.id
-                      ? `Arrêter l’aperçu de ${track.name}`
-                      : `Écouter un aperçu de ${track.name}`
+                      ? t("track.stopPreview", { name: trackLabel })
+                      : t("track.preview", { name: trackLabel })
                   }
                   title={
                     previewTrackId === track.id
-                      ? "Arrêter l’aperçu"
-                      : "Écouter cette piste seule"
+                      ? t("track.stopPreviewTitle")
+                      : t("track.previewTitle")
                   }
                 >
                   {previewTrackId === track.id ? (
@@ -1210,7 +1267,7 @@ export default function App() {
                     <Play size={12} fill="currentColor" />
                   )}
                 </button>
-                <label className="hand-select" title="Attribution de la main">
+                <label className="hand-select" title={t("track.assignment")}>
                   <select
                     value={track.handHint}
                     disabled={!track.selected}
@@ -1218,15 +1275,15 @@ export default function App() {
                       setTrackHand(track.id, event.target.value as HandHint)
                     }
                   >
-                    <option value="auto">Auto</option>
-                    <option value="left">Gauche</option>
-                    <option value="right">Droite</option>
-                    <option value="both">Deux mains</option>
+                    <option value="auto">{t("hand.auto")}</option>
+                    <option value="left">{t("hand.left")}</option>
+                    <option value="right">{t("hand.right")}</option>
+                    <option value="both">{t("hand.both")}</option>
                   </select>
-                  <span>{trackHandLabel(track.handHint)}</span>
+                  <span>{displayHandHint(track.handHint)}</span>
                 </label>
               </div>
-            ))}
+            )})}
           </div>
         </section>
 
@@ -1235,20 +1292,20 @@ export default function App() {
             className={`toggle-row ${showHands ? "enabled" : ""}`}
             onClick={() => setShowHands((current) => !current)}
           >
-            <span><Sparkles size={16} /><span><strong>Mains virtuelles</strong><small>Position 3D complète</small></span></span>
+            <span><Sparkles size={16} /><span><strong>{t("sidebar.virtualHands")}</strong><small>{t("sidebar.virtualHandsHint")}</small></span></span>
             <i><b /></i>
           </button>
           <button
             className={`toggle-row ${loopEnabled ? "enabled" : ""}`}
             onClick={() => changeLoopEnabled(!loopEnabled)}
           >
-            <span><Repeat2 size={16} /><span><strong>Boucle progressive</strong><small>50 → 100 % par 5 %</small></span></span>
+            <span><Repeat2 size={16} /><span><strong>{t("sidebar.progressiveLoop")}</strong><small>{t("sidebar.progressiveLoopHint")}</small></span></span>
             <i><b /></i>
           </button>
           {loopEnabled && (
             <div className="loop-settings">
               <label>
-                Début
+                {t("loop.start")}
                 <select
                   value={loopStartBar}
                   onChange={(event) => {
@@ -1259,13 +1316,13 @@ export default function App() {
                 >
                   {Array.from({ length: totalBars }, (_, index) => (
                     <option value={index + 1} key={index + 1}>
-                      Mesure {index + 1}
+                      {t("loop.measure", { number: index + 1 })}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                Fin
+                {t("loop.end")}
                 <select
                   value={loopEndBar}
                   onChange={(event) =>
@@ -1274,7 +1331,7 @@ export default function App() {
                 >
                   {Array.from({ length: totalBars }, (_, index) => (
                     <option value={index + 1} key={index + 1}>
-                      Mesure {index + 1}
+                      {t("loop.measure", { number: index + 1 })}
                     </option>
                   ))}
                 </select>
@@ -1284,12 +1341,11 @@ export default function App() {
         </section>
 
         <div className="analysis-card">
-          <div><Sparkles size={15} /><span>Analyse harmonique</span></div>
-          <strong>{tonalWindow?.label ?? "Do majeur"}</strong>
-          <small>
-            Confiance {Math.round((tonalWindow?.confidence ?? 1) * 100)} % ·
-            doigtés recalculés
-          </small>
+          <div><Sparkles size={15} /><span>{t("analysis.title")}</span></div>
+          <strong>{tonalLabel}</strong>
+          <small>{t("analysis.confidence", {
+            value: Math.round((tonalWindow?.confidence ?? 1) * 100),
+          })}</small>
         </div>
       </aside>
 
@@ -1297,7 +1353,7 @@ export default function App() {
         <button
           className="sidebar-backdrop"
           onClick={() => setSidebarOpen(false)}
-          aria-label="Fermer les réglages"
+          aria-label={t("sidebar.close")}
         />
       )}
 
@@ -1312,22 +1368,22 @@ export default function App() {
             }
             aria-label={
               viewMode === "perspective"
-                ? "Passer en vue 2D"
-                : "Passer en vue perspective"
+                ? t("view.toFlat")
+                : t("view.toPerspective")
             }
             title={
               viewMode === "perspective"
-                ? "Passer en vue 2D"
-                : "Passer en vue perspective"
+                ? t("view.toFlat")
+                : t("view.toPerspective")
             }
           >
             <Layers3 size={15} />
             <span>
-              {viewMode === "perspective" ? "Vue perspective" : "Vue 2D"}
+              {viewMode === "perspective" ? t("view.perspective") : t("view.flat")}
             </span>
           </button>
           <div className="bar-indicator">
-            MESURE{" "}
+            {t("toolbar.measure")}{" "}
             <strong>
               {Math.min(totalBars, Math.floor(playhead / measureDuration) + 1)}
             </strong>
@@ -1335,7 +1391,7 @@ export default function App() {
           </div>
           <div className="shortcut-hint">
             <KeyboardMusic size={15} />
-            <span>Test clavier : A–P</span>
+            <span>{t("toolbar.keyboardTest")}</span>
           </div>
         </div>
 
@@ -1349,6 +1405,14 @@ export default function App() {
           score={score}
           onKeyDown={registerNoteOn}
           onKeyUp={registerNoteOff}
+          labels={{
+            failed: t("stage.failed"),
+            failedHint: t("stage.failedHint"),
+            left: t("stage.left"),
+            right: t("stage.right"),
+            precision: t("score.precision"),
+            streak: t("score.streak"),
+          }}
         />
 
         <div className="transport">
@@ -1359,15 +1423,15 @@ export default function App() {
                 stopTrackPreview();
                 resetAttempt(loopEnabled ? loopStart : 0);
               }}
-              aria-label="Recommencer"
-              title="Recommencer"
+              aria-label={t("transport.restart")}
+              title={t("transport.restart")}
             >
               <RotateCcw size={18} />
             </button>
             <button
               className="play-button"
               onClick={togglePlayback}
-              aria-label={playing ? "Pause" : "Lecture"}
+              aria-label={playing ? t("transport.pause") : t("transport.play")}
             >
               {playing ? <Pause size={21} fill="currentColor" /> : <Play size={21} fill="currentColor" />}
             </button>
@@ -1381,8 +1445,8 @@ export default function App() {
                 setPlayhead(next);
                 playheadRef.current = next;
               }}
-              aria-label="Mesure suivante"
-              title="Mesure suivante"
+              aria-label={t("transport.nextMeasure")}
+              title={t("transport.nextMeasure")}
             >
               <Redo2 size={18} />
             </button>
@@ -1407,7 +1471,7 @@ export default function App() {
                 setPlayhead(next);
                 playheadRef.current = next;
               }}
-              aria-label="Position dans la partition"
+              aria-label={t("transport.position")}
               style={
                 {
                   "--progress": `${
@@ -1417,22 +1481,22 @@ export default function App() {
               }
             />
             <div className="timeline-labels">
-              <span>{practiceMode === "wait" ? "MODE ATTENTE" : "TEMPO LIBRE"}</span>
-              {loopEnabled && <b>BOUCLE {loopStartBar}–{loopEndBar}</b>}
+              <span>{practiceMode === "wait" ? t("transport.waitMode") : t("transport.freeTempo")}</span>
+              {loopEnabled && <b>{t("transport.loop", { start: loopStartBar, end: loopEndBar })}</b>}
             </div>
           </div>
 
           <div className="transport-right">
             <div className="metric">
-              <span>Précision</span>
+              <span>{t("score.precision")}</span>
               <strong>{performanceMetrics.precision}</strong><small>/100</small>
             </div>
             <div className="metric">
-              <span>Notes</span>
+              <span>{t("score.notes")}</span>
               <strong>{score.correct}</strong><small>/{targetNoteCount}</small>
             </div>
             <label className="tempo-control">
-              <span><SlidersHorizontal size={14} />Tempo</span>
+              <span><SlidersHorizontal size={14} />{t("tempo.title")}</span>
               <select
                 value={tempoPercent}
                 disabled={loopEnabled}
@@ -1453,16 +1517,16 @@ export default function App() {
                   setVolumePanelOpen(false);
                   setMetronomePanelOpen((current) => !current);
                 }}
-                aria-label="Régler le métronome et le tempo"
+                aria-label={t("metronome.settings")}
                 aria-expanded={metronomePanelOpen}
-                title="Métronome et tempo"
+                title={t("help.metronomeTitle")}
               >
                 <Timer size={17} />
               </button>
               {metronomePanelOpen && (
                 <div className="metronome-popover">
                   <div className="metronome-head">
-                    <span>Métronome</span>
+                    <span>{t("metronome.title")}</span>
                     <button
                       className={`mini-toggle ${metronomeEnabled ? "enabled" : ""}`}
                       onClick={() => {
@@ -1472,14 +1536,14 @@ export default function App() {
                       }}
                     >
                       <i />
-                      {metronomeEnabled ? "Activé" : "Désactivé"}
+                      {metronomeEnabled ? t("metronome.enabled") : t("metronome.disabled")}
                     </button>
                   </div>
                   <div className="bpm-display">
                     <button
                       onClick={() => applyTempoBpm(effectiveBpm - 5)}
                       disabled={loopEnabled}
-                      aria-label="Ralentir de 5 BPM"
+                      aria-label={t("metronome.slower")}
                     >
                       <Minus size={14} />
                     </button>
@@ -1487,7 +1551,7 @@ export default function App() {
                     <button
                       onClick={() => applyTempoBpm(effectiveBpm + 5)}
                       disabled={loopEnabled}
-                      aria-label="Accélérer de 5 BPM"
+                      aria-label={t("metronome.faster")}
                     >
                       <Plus size={14} />
                     </button>
@@ -1504,15 +1568,15 @@ export default function App() {
                       setTempoPercent(Number(event.target.value));
                       syncMetronome(playheadRef.current);
                     }}
-                    aria-label="Tempo de la musique"
+                    aria-label={t("metronome.musicTempo")}
                   />
                   <div className="tempo-scale">
                     <span>25 %</span>
-                    <strong>{tempoPercent} % du tempo original</strong>
+                    <strong>{t("metronome.original", { value: tempoPercent })}</strong>
                     <span>200 %</span>
                   </div>
                   {loopEnabled && (
-                    <p>Le tempo est piloté automatiquement par la boucle progressive.</p>
+                    <p>{t("metronome.loopLocked")}</p>
                   )}
                 </div>
               )}
@@ -1524,9 +1588,9 @@ export default function App() {
                   setMetronomePanelOpen(false);
                   setVolumePanelOpen((current) => !current);
                 }}
-                aria-label="Régler le volume"
+                aria-label={t("volume.settings")}
                 aria-expanded={volumePanelOpen}
-                title="Volume"
+                title={t("volume.title")}
               >
                 {midiPlaybackEnabled && masterVolume > 0 ? (
                   <Volume2 size={17} />
@@ -1537,7 +1601,7 @@ export default function App() {
               {volumePanelOpen && (
                 <div className="volume-popover">
                   <div className="volume-popover-head">
-                    <span>Volume général</span>
+                    <span>{t("volume.general")}</span>
                     <strong>{midiPlaybackEnabled ? masterVolume : 0}%</strong>
                   </div>
                   <div className="volume-slider-row">
@@ -1555,7 +1619,7 @@ export default function App() {
                         setMasterVolume(nextVolume / 100);
                         if (nextVolume > 0) syncAudioCursor(playheadRef.current);
                       }}
-                      aria-label="Volume général"
+                      aria-label={t("volume.general")}
                     />
                     <Volume2 size={14} />
                   </div>
@@ -1575,9 +1639,9 @@ export default function App() {
                     }}
                   >
                     {midiPlaybackEnabled ? (
-                      <><VolumeX size={14} />Couper le son</>
+                      <><VolumeX size={14} />{t("volume.mute")}</>
                     ) : (
-                      <><Volume2 size={14} />Rétablir le son</>
+                      <><Volume2 size={14} />{t("volume.unmute")}</>
                     )}
                   </button>
                 </div>
@@ -1606,35 +1670,32 @@ export default function App() {
           aria-labelledby="summary-title"
         >
           <div className="summary-panel">
-            <span className="summary-kicker">FIN DE LA PARTITION</span>
+            <span className="summary-kicker">{t("summary.kicker")}</span>
             <h2 id="summary-title">
               {performanceSummary.metrics.precision >= 95
-                ? "Magnifique prestation !"
+                ? t("summary.excellent")
                 : performanceSummary.metrics.precision >= 80
-                  ? "Très belle progression"
-                  : "Chaque passage vous fait progresser"}
+                  ? t("summary.good")
+                  : t("summary.keepGoing")}
             </h2>
-            <p>
-              Votre précision combine le respect du rythme, les fausses notes
-              et les notes manquées.
-            </p>
+            <p>{t("summary.explanation")}</p>
             <div className="summary-score-ring">
               <strong>{performanceSummary.metrics.precision}</strong>
               <span>/100</span>
             </div>
             <div className="summary-stats">
-              <div><span>Timing</span><strong>{performanceSummary.metrics.timing}%</strong></div>
-              <div><span>Correctes</span><strong>{performanceSummary.score.correct}</strong></div>
-              <div><span>Manquées</span><strong>{performanceSummary.score.missed}</strong></div>
-              <div><span>Fausses</span><strong>{performanceSummary.score.wrong}</strong></div>
-              <div><span>Meilleure série</span><strong>{performanceSummary.score.bestStreak}</strong></div>
+              <div><span>{t("summary.timing")}</span><strong>{performanceSummary.metrics.timing}%</strong></div>
+              <div><span>{t("summary.correct")}</span><strong>{performanceSummary.score.correct}</strong></div>
+              <div><span>{t("summary.missed")}</span><strong>{performanceSummary.score.missed}</strong></div>
+              <div><span>{t("summary.wrong")}</span><strong>{performanceSummary.score.wrong}</strong></div>
+              <div><span>{t("summary.bestStreak")}</span><strong>{performanceSummary.score.bestStreak}</strong></div>
             </div>
             <div className="summary-actions">
               <button
                 className="secondary-action"
                 onClick={() => setPerformanceSummary(null)}
               >
-                Fermer
+                {t("summary.close")}
               </button>
               <button
                 className="primary-action"
@@ -1643,7 +1704,7 @@ export default function App() {
                   setPlaying(true);
                 }}
               >
-                <RotateCcw size={14} /> Rejouer
+                <RotateCcw size={14} /> {t("summary.replay")}
               </button>
             </div>
           </div>
@@ -1660,7 +1721,7 @@ export default function App() {
             <button
               className="icon-button discovery-close"
               onClick={() => setDiscoveryOpen(false)}
-              aria-label="Fermer la découverte du piano"
+              aria-label={t("discovery.close")}
             >
               <X size={18} />
             </button>
@@ -1670,17 +1731,20 @@ export default function App() {
             {discoveryStep !== "result" ? (
               <>
                 <span className="discovery-kicker">
-                  DÉCOUVERTE DU PIANO · ÉTAPE {discoveryStep === "low" ? "1" : "2"} SUR 2
+                  {t("discovery.kicker", { step: discoveryStep === "low" ? 1 : 2 })}
                 </span>
                 <h2 id="discovery-title">
                   {discoveryStep === "low"
-                    ? "Jouez la touche la plus grave"
-                    : "Jouez maintenant la touche la plus aiguë"}
+                    ? t("discovery.lowTitle")
+                    : t("discovery.highTitle")}
                 </h2>
                 <p>
                   {discoveryStep === "low"
-                    ? "Appuyez une seule fois sur la toute première touche à gauche de votre clavier."
-                    : `Première limite détectée : ${noteName(discoveryLowNote ?? 21)} · MIDI ${discoveryLowNote ?? 21}.`}
+                    ? t("discovery.lowHelp")
+                    : t("discovery.highHelp", {
+                        note: localizedNoteName(discoveryLowNote ?? 21),
+                        midi: discoveryLowNote ?? 21,
+                      })}
                 </p>
                 <div className={`discovery-keyboard ${discoveryStep}`}>
                   {Array.from({ length: 18 }, (_, index) => (
@@ -1690,23 +1754,23 @@ export default function App() {
                 </div>
                 <div className="discovery-listening">
                   <span className="status-pulse" />
-                  En attente d’une note MIDI…
+                  {t("discovery.waiting")}
                 </div>
               </>
             ) : (
               <>
-                <span className="discovery-kicker">DÉCOUVERTE TERMINÉE</span>
-                <h2 id="discovery-title">{keyboardCalibration?.label}</h2>
-                <p>
-                  Étendue détectée de{" "}
-                  <strong>{noteName(keyboardCalibration?.lowNote ?? 21)}</strong>{" "}
-                  à{" "}
-                  <strong>{noteName(keyboardCalibration?.highNote ?? 108)}</strong>.
-                </p>
+                <span className="discovery-kicker">{t("discovery.done")}</span>
+                <h2 id="discovery-title">
+                  {describeKeyboard(keyboardCalibration?.keyCount ?? 88, language)}
+                </h2>
+                <p>{t("discovery.range", {
+                  low: localizedNoteName(keyboardCalibration?.lowNote ?? 21),
+                  high: localizedNoteName(keyboardCalibration?.highNote ?? 108),
+                })}</p>
                 <div className="discovery-result">
-                  <div><span>Touches</span><strong>{keyboardCalibration?.keyCount}</strong></div>
-                  <div><span>Note grave</span><strong>{keyboardCalibration?.lowNote}</strong></div>
-                  <div><span>Note aiguë</span><strong>{keyboardCalibration?.highNote}</strong></div>
+                  <div><span>{t("discovery.keys")}</span><strong>{keyboardCalibration?.keyCount}</strong></div>
+                  <div><span>{t("discovery.lowNote")}</span><strong>{keyboardCalibration?.lowNote}</strong></div>
+                  <div><span>{t("discovery.highNote")}</span><strong>{keyboardCalibration?.highNote}</strong></div>
                 </div>
                 <div className="discovery-actions">
                   <button
@@ -1716,13 +1780,13 @@ export default function App() {
                       setDiscoveryStep("low");
                     }}
                   >
-                    Recommencer
+                    {t("discovery.retry")}
                   </button>
                   <button
                     className="primary-action"
                     onClick={() => setDiscoveryOpen(false)}
                   >
-                    Terminer
+                    {t("discovery.finish")}
                   </button>
                 </div>
               </>
@@ -1743,69 +1807,69 @@ export default function App() {
           <div className="help-panel">
             <div className="help-head">
               <div>
-                <span className="help-kicker">CENTRE D’AIDE</span>
-                <h2 id="help-title">Bien démarrer</h2>
+                <span className="help-kicker">{t("help.kicker")}</span>
+                <h2 id="help-title">{t("help.title")}</h2>
               </div>
               <button
                 className="icon-button"
                 onClick={() => setHelpOpen(false)}
-                aria-label="Fermer l’aide"
+                aria-label={t("help.close")}
               >
                 <X size={19} />
               </button>
             </div>
             <div className="help-body">
               <section className="quick-start">
-                <h3>Votre première session</h3>
+                <h3>{t("help.firstSession")}</h3>
                 <ol>
-                  <li><b>1</b><span><strong>Importez un fichier MIDI</strong><small>Utilisez le bouton à gauche ou déposez un fichier dans la fenêtre.</small></span></li>
-                  <li><b>2</b><span><strong>Connectez votre piano</strong><small>Autorisez l’accès puis jouez ses touches extrêmes pour découvrir son étendue.</small></span></li>
-                  <li><b>3</b><span><strong>Choisissez les pistes et les mains</strong><small>Activez une ou deux pistes, puis attribuez-les automatiquement ou manuellement.</small></span></li>
-                  <li><b>4</b><span><strong>Lancez la lecture</strong><small>Suivez les barres colorées et jouez quand elles atteignent le clavier.</small></span></li>
+                  <li><b>1</b><span><strong>{t("help.importTitle")}</strong><small>{t("help.importText")}</small></span></li>
+                  <li><b>2</b><span><strong>{t("help.connectTitle")}</strong><small>{t("help.connectText")}</small></span></li>
+                  <li><b>3</b><span><strong>{t("help.tracksTitle")}</strong><small>{t("help.tracksText")}</small></span></li>
+                  <li><b>4</b><span><strong>{t("help.playTitle")}</strong><small>{t("help.playText")}</small></span></li>
                 </ol>
               </section>
               <div className="help-grid">
                 <section>
                   <div className="help-section-icon"><Gauge size={18} /></div>
-                  <h3>En rythme</h3>
-                  <p>Le morceau avance au tempo choisi. Votre score mesure l’écart entre votre frappe et la note attendue.</p>
+                  <h3>{t("mode.tempo")}</h3>
+                  <p>{t("help.tempoText")}</p>
                 </section>
                 <section>
                   <div className="help-section-icon"><Hand size={18} /></div>
-                  <h3>Mode attente</h3>
-                  <p>Le rouleau s’arrête sur chaque note ou accord et reprend lorsque toutes les bonnes touches sont jouées.</p>
+                  <h3>{t("help.waitTitle")}</h3>
+                  <p>{t("help.waitText")}</p>
                 </section>
                 <section>
                   <div className="help-section-icon"><Repeat2 size={18} /></div>
-                  <h3>Boucle progressive</h3>
-                  <p>Commence à 50 %, puis accélère de 5 % après chaque réussite jusqu’au tempo réel.</p>
+                  <h3>{t("sidebar.progressiveLoop")}</h3>
+                  <p>{t("help.loopText")}</p>
                 </section>
                 <section>
                   <div className="help-section-icon"><Volume2 size={18} /></div>
-                  <h3>Son et volume</h3>
-                  <p>L’icône haut-parleur ouvre le volume général. En mode attente, les notes à travailler sont jouées par vous.</p>
+                  <h3>{t("help.soundTitle")}</h3>
+                  <p>{t("help.soundText")}</p>
                 </section>
                 <section>
                   <div className="help-section-icon"><Timer size={18} /></div>
-                  <h3>Métronome et tempo</h3>
-                  <p>L’icône chronomètre active les temps sonores et permet de ralentir ou accélérer toute la musique.</p>
+                  <h3>{t("help.metronomeTitle")}</h3>
+                  <p>{t("help.metronomeText")}</p>
                 </section>
                 <section>
                   <div className="help-section-icon"><Layers3 size={18} /></div>
-                  <h3>Vues 3D et 2D</h3>
-                  <p>Le bouton en haut du rouleau bascule entre la perspective immersive et une lecture verticale à plat.</p>
+                  <h3>{t("help.viewsTitle")}</h3>
+                  <p>{t("help.viewsText")}</p>
                 </section>
               </div>
               <section className="shortcuts">
                 <div>
-                  <h3>Raccourcis</h3>
-                  <p><kbd>Espace</kbd> Lecture / pause</p>
-                  <p><kbd>A–P</kbd> Piano de test</p>
-                  <p><kbd>Échap</kbd> Fermer les panneaux</p>
+                  <h3>{t("help.shortcuts")}</h3>
+                  <p><kbd>Space</kbd> {t("help.space")}</p>
+                  <p><kbd>A–P</kbd> {t("help.testPiano")}</p>
+                  <p><kbd>Esc</kbd> {t("help.escape")}</p>
                 </div>
                 <div className="browser-note">
                   <Maximize2 size={17} />
-                  <span><strong>Compatibilité MIDI</strong>Utilisez Chrome ou Edge sur une page HTTPS ou sur localhost.</span>
+                  <span><strong>{t("help.compatibility")}</strong>{t("help.compatibilityText")}</span>
                 </div>
               </section>
             </div>
@@ -1821,16 +1885,16 @@ export default function App() {
               <Music2 size={31} strokeWidth={2.5} />
             </div>
             <div className="splash-name">PLAYALONG<b>3D</b></div>
-            <p>Votre piano. Votre rythme.</p>
-            <div className="splash-progress" aria-label={`Chargement ${loadingProgress} %`}>
+            <p>{t("splash.tagline")}</p>
+            <div className="splash-progress" aria-label={t("splash.loading", { progress: loadingProgress })}>
               <i style={{ width: `${loadingProgress}%` }} />
             </div>
             <div className="splash-meta">
-              <span>{loadingStatus}</span>
+              <span>{t(loadingStatusKey)}</span>
               <strong>{loadingProgress}%</strong>
             </div>
           </div>
-          <small className="splash-version">MIDI LEARNING STUDIO · v0.1</small>
+          <small className="splash-version">{t("splash.version")}</small>
         </div>
       )}
     </div>

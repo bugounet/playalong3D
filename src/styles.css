@@ -289,8 +289,48 @@ input:focus-visible {
 
 .midi-select select option,
 .tempo-control select option,
-.loop-settings select option {
+.loop-settings select option,
+.language-select select option {
   background: #121920;
+}
+
+.language-select {
+  position: relative;
+  display: flex;
+  height: 36px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  color: #aeb8c0;
+  background: #0e151c;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: 160ms ease;
+}
+
+.language-select:hover,
+.language-select:focus-within {
+  color: #edf3f5;
+  background: #131c24;
+  border-color: rgba(194, 240, 78, 0.25);
+}
+
+.language-select svg:first-child {
+  color: var(--accent);
+}
+
+.language-select strong {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.language-select select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .status-pulse {
@@ -2431,6 +2471,17 @@ kbd {
   }
 
   .midi-discovery-button span {
+    display: none;
+  }
+
+  .language-select {
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .language-select strong,
+  .language-select svg:last-child {
     display: none;
   }
 

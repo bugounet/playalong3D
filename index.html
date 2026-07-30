@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b10" />
     <meta
       name="description"
-      content="Playalong 3D — apprenez le piano avec vos fichiers MIDI."
+      content="Playalong 3D — learn piano with your MIDI files."
     />
     <title>Playalong 3D</title>
     <style>
@@ -102,15 +102,54 @@
   </head>
   <body>
     <div id="root">
-      <div id="boot-splash" role="status" aria-label="Chargement de Playalong 3D">
+      <div id="boot-splash" role="status" aria-label="Loading Playalong 3D">
         <div class="boot-content">
           <div class="boot-logo">♪</div>
           <div class="boot-title">PLAYALONG<b>3D</b></div>
           <div class="boot-track"></div>
-          <div class="boot-status">Chargement du moteur musical…</div>
+          <div class="boot-status">Loading the music engine…</div>
         </div>
       </div>
     </div>
+    <script>
+      (() => {
+        const supported = ["fr", "en", "de", "es"];
+        const stored = localStorage.getItem("playalong3d-language");
+        const browserLanguage = navigator.language.toLowerCase().slice(0, 2);
+        const language = supported.includes(stored)
+          ? stored
+          : supported.includes(browserLanguage)
+            ? browserLanguage
+            : "en";
+        const bootCopy = {
+          fr: {
+            status: "Chargement du moteur musical…",
+            aria: "Chargement de Playalong 3D",
+            description: "Playalong 3D — apprenez le piano avec vos fichiers MIDI.",
+          },
+          en: {
+            status: "Loading the music engine…",
+            aria: "Loading Playalong 3D",
+            description: "Playalong 3D — learn piano with your MIDI files.",
+          },
+          de: {
+            status: "Musik-Engine wird geladen…",
+            aria: "Playalong 3D wird geladen",
+            description: "Playalong 3D — Klavier lernen mit deinen MIDI-Dateien.",
+          },
+          es: {
+            status: "Cargando el motor musical…",
+            aria: "Cargando Playalong 3D",
+            description: "Playalong 3D — aprende piano con tus archivos MIDI.",
+          },
+        };
+        const copy = bootCopy[language];
+        document.documentElement.lang = language;
+        document.querySelector(".boot-status").textContent = copy.status;
+        document.querySelector("#boot-splash").setAttribute("aria-label", copy.aria);
+        document.querySelector('meta[name="description"]').content = copy.description;
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

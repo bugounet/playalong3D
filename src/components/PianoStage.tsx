@@ -20,6 +20,14 @@ interface PianoStageProps {
   score: ScoreState;
   onKeyDown: (midi: number) => void;
   onKeyUp: (midi: number) => void;
+  labels: {
+    failed: string;
+    failedHint: string;
+    left: string;
+    right: string;
+    precision: string;
+    streak: string;
+  };
 }
 
 interface KeyLayout {
@@ -459,7 +467,7 @@ function Scene(props: PianoStageProps) {
 }
 
 class StageErrorBoundary extends Component<
-  { children: ReactNode },
+  { children: ReactNode; failed: string; failedHint: string },
   { failed: boolean }
 > {
   state = { failed: false };
@@ -476,8 +484,8 @@ class StageErrorBoundary extends Component<
     if (this.state.failed) {
       return (
         <div className="webgl-fallback">
-          <span>La scène 3D n’a pas pu démarrer.</span>
-          <small>Activez WebGL ou essayez un navigateur récent.</small>
+          <span>{this.props.failed}</span>
+          <small>{this.props.failedHint}</small>
         </div>
       );
     }
@@ -490,7 +498,10 @@ export function PianoStage(props: PianoStageProps) {
 
   return (
     <div className="stage-shell">
-      <StageErrorBoundary>
+      <StageErrorBoundary
+        failed={props.labels.failed}
+        failedHint={props.labels.failedHint}
+      >
         <Canvas
           shadows
           dpr={[1, 1.65]}
@@ -502,16 +513,16 @@ export function PianoStage(props: PianoStageProps) {
       </StageErrorBoundary>
       <div className="stage-vignette" />
       <div className="stage-legend" aria-hidden="true">
-        <span><i className="legend-dot left" />Main gauche</span>
-        <span><i className="legend-dot right" />Main droite</span>
+        <span><i className="legend-dot left" />{props.labels.left}</span>
+        <span><i className="legend-dot right" />{props.labels.right}</span>
       </div>
       <div className="score-float">
         <div>
-          <span>Précision</span>
+          <span>{props.labels.precision}</span>
           <strong>{performance.precision}%</strong>
         </div>
         <div>
-          <span>Série</span>
+          <span>{props.labels.streak}</span>
           <strong>{props.score.streak}</strong>
         </div>
       </div>

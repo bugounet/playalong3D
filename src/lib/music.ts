@@ -407,8 +407,8 @@ export async function parseMidiFile(file: File): Promise<SongData> {
       track.notes.length;
     return {
       id: sourceIndex,
-      name: track.name || `Piste ${sourceIndex + 1}`,
-      instrument: track.instrument.name || "Piano",
+      name: track.name || "",
+      instrument: track.instrument.name || "",
       channel: track.channel + 1,
       noteCount: track.notes.length,
       averagePitch,
@@ -430,7 +430,7 @@ export async function parseMidiFile(file: File): Promise<SongData> {
       ticks: note.ticks,
       durationTicks: note.durationTicks,
       trackId: sourceIndex,
-      trackName: track.name || `Piste ${sourceIndex + 1}`,
+      trackName: track.name || "",
     })),
   );
 

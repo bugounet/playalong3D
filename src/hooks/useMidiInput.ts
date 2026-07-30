@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MidiDevice, MidiInputEvent } from "../types";
 
-export function useMidiInput(onMidiEvent: (event: MidiInputEvent) => void) {
+interface MidiMessages {
+  defaultDevice: string;
+  unsupported: string;
+  denied: string;
+}
+
+export function useMidiInput(
+  onMidiEvent: (event: MidiInputEvent) => void,
+  messages: MidiMessages,
+) {
   const [access, setAccess] = useState<MIDIAccess | null>(null);
   const [devices, setDevices] = useState<MidiDevice[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -20,7 +29,7 @@ export function useMidiInput(onMidiEvent: (event: MidiInputEvent) => void) {
   const refreshDevices = useCallback((midiAccess: MIDIAccess) => {
     const nextDevices = getInputs(midiAccess).map((input) => ({
         id: input.id,
-        name: input.name || "Clavier MIDI",
+        name: input.name || messages.defaultDevice,
         manufacturer: input.manufacturer || "",
       }));
     setDevices(nextDevices);
@@ -30,11 +39,11 @@ export function useMidiInput(onMidiEvent: (event: MidiInputEvent) => void) {
       }
       return nextDevices[0]?.id ?? "";
     });
-  }, [getInputs]);
+  }, [getInputs, messages.defaultDevice]);
 
   const requestAccess = useCallback(async () => {
     if (!navigator.requestMIDIAccess) {
-      setError("Web MIDI n’est pas disponible dans ce navigateur.");
+      setError(messages.unsupported);
       return;
     }
     try {
@@ -44,9 +53,9 @@ export function useMidiInput(onMidiEvent: (event: MidiInputEvent) => void) {
       midiAccess.onstatechange = () => refreshDevices(midiAccess);
       setError("");
     } catch {
-      setError("Accès MIDI refusé. Autorisez ce site dans le navigateur.");
+      setError(messages.denied);
     }
-  }, [refreshDevices]);
+  }, [messages.denied, messages.unsupported, refreshDevices]);
 
   useEffect(() => {
     if (!access) return;
