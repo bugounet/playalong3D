@@ -207,6 +207,7 @@ export default function App() {
     () => initialDemoPreferences.practiceMode ?? "tempo",
   );
   const [playing, setPlaying] = useState(false);
+  const [countIn, setCountIn] = useState<3 | 2 | 1 | null>(null);
   const [playhead, setPlayhead] = useState(0);
   const [tempoPercent, setTempoPercent] = useState(
     () => initialDemoPreferences.tempoPercent ?? 100,
@@ -277,6 +278,9 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const songLibraryRef = useRef<HTMLDivElement>(null);
   const playheadRef = useRef(playhead);
+  const playingRef = useRef(false);
+  const countInRef = useRef<3 | 2 | 1 | null>(null);
+  const resumeAfterVisibilityRef = useRef(false);
   const scoreRef = useRef(score);
   const hitIdsRef = useRef(new Set<string>());
   const missedIdsRef = useRef(new Set<string>());
@@ -496,7 +500,13 @@ export default function App() {
       setPlayhead(targetTime);
       playheadRef.current = targetTime;
       setPerformanceSummary(null);
-      if (!preservePlayback) setPlaying(false);
+      setCountIn(null);
+      countInRef.current = null;
+      if (!preservePlayback) {
+        setPlaying(false);
+        playingRef.current = false;
+        resumeAfterVisibilityRef.current = false;
+      }
     },
     [onsetGroups, stopAll, syncAudioCursor, syncMetronome],
   );
@@ -524,6 +534,10 @@ export default function App() {
 
       stopTrackPreview();
       ensureContext();
+      resumeAfterVisibilityRef.current = false;
+      countInRef.current = null;
+      playingRef.current = false;
+      setCountIn(null);
       setPlaying(false);
       const trackNotes = song.rawNotes
         .filter((note) => note.trackId === trackId)
@@ -583,9 +597,137 @@ export default function App() {
     [],
   );
 
+  const stopPlayback = useCallback(() => {
+    resumeAfterVisibilityRef.current = false;
+    countInRef.current = null;
+    playingRef.current = false;
+    setCountIn(null);
+    setPlaying(false);
+    stopAll();
+  }, [stopAll]);
+
+  const startPlaybackCountIn = useCallback(() => {
+    stopTrackPreview();
+    ensureContext();
+    resumeAfterVisibilityRef.current = false;
+    playingRef.current = false;
+    setPlaying(false);
+
+    if (playheadRef.current >= effectiveEnd - 0.03) {
+      resetAttempt(loopEnabled ? loopStart : 0, true);
+    }
+
+    syncAudioCursor(playheadRef.current);
+    syncMetronome(playheadRef.current);
+    countInRef.current = 3;
+    setCountIn(3);
+    metronomeClick(true, metronomeVolume / 100);
+  }, [
+    effectiveEnd,
+    ensureContext,
+    loopEnabled,
+    loopStart,
+    metronomeClick,
+    metronomeVolume,
+    resetAttempt,
+    stopTrackPreview,
+    syncAudioCursor,
+    syncMetronome,
+  ]);
+
+  const togglePlayback = useCallback(() => {
+    if (playingRef.current || countInRef.current !== null) {
+      stopPlayback();
+      return;
+    }
+    startPlaybackCountIn();
+  }, [startPlaybackCountIn, stopPlayback]);
+
+  useEffect(() => {
+    if (countIn === null) return;
+    const effectiveTempo = Math.max(1, (song.bpm * tempoPercent) / 100);
+    const timer = window.setTimeout(() => {
+      if (countIn > 1) {
+        const nextCount = (countIn - 1) as 2 | 1;
+        countInRef.current = nextCount;
+        setCountIn(nextCount);
+        metronomeClick(false, metronomeVolume / 100);
+        return;
+      }
+
+      countInRef.current = null;
+      setCountIn(null);
+      if (document.visibilityState !== "visible") {
+        resumeAfterVisibilityRef.current = true;
+        return;
+      }
+      syncAudioCursor(playheadRef.current);
+      syncMetronome(playheadRef.current);
+      playingRef.current = true;
+      setPlaying(true);
+    }, 60_000 / effectiveTempo);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    countIn,
+    metronomeClick,
+    metronomeVolume,
+    song.bpm,
+    syncAudioCursor,
+    syncMetronome,
+    tempoPercent,
+  ]);
+
+  useEffect(() => {
+    const pauseForVisibility = () => {
+      const shouldResume =
+        playingRef.current || countInRef.current !== null;
+      if (!shouldResume) return;
+
+      playingRef.current = false;
+      countInRef.current = null;
+      setPlaying(false);
+      setCountIn(null);
+      stopAll();
+      resumeAfterVisibilityRef.current = true;
+    };
+
+    const resumeWhenVisible = () => {
+      if (
+        document.visibilityState === "visible" &&
+        resumeAfterVisibilityRef.current
+      ) {
+        resumeAfterVisibilityRef.current = false;
+        startPlaybackCountIn();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") pauseForVisibility();
+      else resumeWhenVisible();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", pauseForVisibility);
+    window.addEventListener("pageshow", resumeWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", pauseForVisibility);
+      window.removeEventListener("pageshow", resumeWhenVisible);
+    };
+  }, [startPlaybackCountIn, stopAll]);
+
   useEffect(() => {
     playheadRef.current = playhead;
   }, [playhead]);
+
+  useEffect(() => {
+    playingRef.current = playing;
+  }, [playing]);
+
+  useEffect(() => {
+    countInRef.current = countIn;
+  }, [countIn]);
 
   useEffect(() => {
     scoreRef.current = score;
@@ -776,6 +918,8 @@ export default function App() {
           next = loopStart;
         } else {
           next = song.duration;
+          playingRef.current = false;
+          resumeAfterVisibilityRef.current = false;
           setPlaying(false);
           finishPerformance();
         }
@@ -808,6 +952,7 @@ export default function App() {
     (midi: number, velocity = 0.78) => {
       noteOn(midi, velocity);
       setActiveMidi((current) => new Set(current).add(midi));
+      if (countInRef.current !== null) return;
       const now = playheadRef.current;
 
       if (practiceMode === "wait") {
@@ -1015,6 +1160,10 @@ export default function App() {
 
     if (!promptedMidiDevicesRef.current.has(midi.selectedId)) {
       promptedMidiDevicesRef.current.add(midi.selectedId);
+      resumeAfterVisibilityRef.current = false;
+      countInRef.current = null;
+      playingRef.current = false;
+      setCountIn(null);
       setPlaying(false);
       stopAll();
       setKeyboardCalibration(null);
@@ -1036,16 +1185,7 @@ export default function App() {
       }
       if (event.code === "Space") {
         event.preventDefault();
-        stopTrackPreview();
-        ensureContext();
-        setPlaying((current) => {
-          if (current) stopAll();
-          else {
-            syncAudioCursor(playheadRef.current);
-            syncMetronome(playheadRef.current);
-          }
-          return !current;
-        });
+        togglePlayback();
         return;
       }
       const midiNote = COMPUTER_KEYS[event.key.toLowerCase()];
@@ -1068,13 +1208,9 @@ export default function App() {
       window.removeEventListener("keyup", onKeyUp);
     };
   }, [
-    ensureContext,
     registerNoteOff,
     registerNoteOn,
-    stopAll,
-    stopTrackPreview,
-    syncAudioCursor,
-    syncMetronome,
+    togglePlayback,
   ]);
 
   const currentTargets = useMemo(() => {
@@ -1128,6 +1264,10 @@ export default function App() {
       setLastScore(restoredScore);
       setScore(EMPTY_SCORE);
       scoreRef.current = EMPTY_SCORE;
+      resumeAfterVisibilityRef.current = false;
+      countInRef.current = null;
+      playingRef.current = false;
+      setCountIn(null);
       setPlaying(false);
       setPlayhead(0);
       playheadRef.current = 0;
@@ -1272,22 +1412,6 @@ export default function App() {
     void handleFile(event.dataTransfer.files[0]);
   };
 
-  const togglePlayback = () => {
-    stopTrackPreview();
-    ensureContext();
-    if (playheadRef.current >= effectiveEnd - 0.03) {
-      resetAttempt(loopEnabled ? loopStart : 0, true);
-    }
-    setPlaying((current) => {
-      if (current) stopAll();
-      else {
-        syncAudioCursor(playheadRef.current);
-        syncMetronome(playheadRef.current);
-      }
-      return !current;
-    });
-  };
-
   const changeLoopEnabled = (enabled: boolean) => {
     setLoopEnabled(enabled);
     if (enabled) {
@@ -1313,6 +1437,7 @@ export default function App() {
   ).length;
   const performanceMetrics = calculatePerformanceMetrics(score);
   const effectiveBpm = Math.round((song.bpm * tempoPercent) / 100);
+  const playbackActive = playing || countIn !== null;
   const activeDemo = DEMO_SONGS.find((demo) => demo.id === activeSongId);
   const isDemoSong = Boolean(activeDemo);
   const displaySongName = activeDemo
@@ -1494,8 +1619,7 @@ export default function App() {
               <button
                 className="midi-discovery-button"
                 onClick={() => {
-                  setPlaying(false);
-                  stopAll();
+                  stopPlayback();
                   setDiscoveryLowNote(null);
                   setDiscoveryStep("low");
                   setDiscoveryOpen(true);
@@ -1814,6 +1938,22 @@ export default function App() {
           </div>
         </div>
 
+        {countIn !== null && (
+          <div
+            className="count-in-overlay"
+            role="status"
+            aria-live="assertive"
+            aria-label={t("countIn.announcement", { count: countIn })}
+          >
+            <span>{t("countIn.label")}</span>
+            <div className="count-in-beat" key={countIn}>
+              <i />
+              <strong>{countIn}</strong>
+            </div>
+            <small>{t("countIn.stopHint")}</small>
+          </div>
+        )}
+
         <PianoStage
           notes={practiceNotes}
           playhead={playhead}
@@ -1851,9 +1991,19 @@ export default function App() {
             <button
               className="play-button"
               onClick={togglePlayback}
-              aria-label={playing ? t("transport.pause") : t("transport.play")}
+              aria-label={
+                countIn !== null
+                  ? t("transport.stopCountIn")
+                  : playing
+                    ? t("transport.pause")
+                    : t("transport.play")
+              }
             >
-              {playing ? <Pause size={21} fill="currentColor" /> : <Play size={21} fill="currentColor" />}
+              {playbackActive ? (
+                <Pause size={21} fill="currentColor" />
+              ) : (
+                <Play size={21} fill="currentColor" />
+              )}
             </button>
             <button
               className="transport-icon"
@@ -2257,7 +2407,7 @@ export default function App() {
                 className="primary-action"
                 onClick={() => {
                   resetAttempt(0, true);
-                  setPlaying(true);
+                  startPlaybackCountIn();
                 }}
               >
                 <RotateCcw size={14} /> {t("summary.replay")}

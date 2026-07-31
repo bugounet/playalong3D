@@ -46,8 +46,9 @@ computer keys.
    **Wait for note** mode. A single MIDI track can be analysed as a two-hand
    piano part.
 4. Optionally enable the virtual hands, metronome, or progressive loop, then
-   start playback. The metronome control changes both the music tempo and its
-   own independent click volume.
+   start playback. Every start uses an animated, tempo-synchronized 3–2–1
+   count-in with metronome clicks. The metronome control changes both the music
+   tempo and its own independent click volume.
 5. At the end of a normal run, review the timing, correct notes, missed notes,
    wrong notes, and best streak. Progressive loops show shorter pass/retry
    feedback instead of the full summary.
@@ -79,6 +80,10 @@ computer keys.
 - MIDI keyboard range discovery;
 - an accented metronome with an independent volume control and music-tempo
   control from 25% to 200%;
+- an animated 3–2–1 count-in before every start or resume, using the
+  metronome click at the selected tempo;
+- automatic pause when the page becomes hidden, followed by a fresh count-in
+  when it becomes visible again;
 - performance summaries combining timing, wrong notes, and missed notes;
 - a responsive, localized interface and static deployment through GitHub
   Pages.
@@ -86,6 +91,9 @@ computer keys.
 On phone-sized screens, the keyboard follows the next notes using at most eight
 visible MIDI keys, and practice is limited to one hand at a time. The
 both-hands control is disabled automatically.
+
+The play/pause button and the Space key can cancel the count-in before playback
+starts. The playhead remains at its paused position.
 
 ## Scoring and progressive loops
 
