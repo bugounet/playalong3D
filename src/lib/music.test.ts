@@ -1,6 +1,7 @@
 import { Midi } from "@tonejs/midi";
 import { describe, expect, it } from "vitest";
 import {
+  DEMO_SONGS,
   MAX_CROSSING_FINGER_DISTANCE,
   analyzeHarmony,
   annotateForPractice,
@@ -9,6 +10,26 @@ import {
 } from "./music";
 
 describe("harmonic analysis and fingering", () => {
+  it("provides several built-in major and minor scales", () => {
+    expect(DEMO_SONGS.map((demo) => demo.id)).toEqual([
+      "demo:c-major",
+      "demo:g-major",
+      "demo:f-major",
+      "demo:a-minor",
+    ]);
+
+    for (const demo of DEMO_SONGS) {
+      const song = createDemoSong(demo.id);
+      const rightPitches = song.rawNotes
+        .filter((note) => note.trackId === 1)
+        .map((note) => (note.midi - demo.tonic + 12) % 12);
+      const expectedPitchClasses = new Set(
+        demo.intervals.map((interval) => interval % 12),
+      );
+      expect(new Set(rightPitches)).toEqual(expectedPitchClasses);
+    }
+  });
+
   it("recognises the demo as C major", () => {
     const song = createDemoSong();
     const harmony = analyzeHarmony(song.rawNotes, song.ppq);

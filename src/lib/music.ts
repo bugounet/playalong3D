@@ -750,16 +750,56 @@ export async function parseMidiFile(file: File): Promise<SongData> {
   };
 }
 
+export const DEMO_SONGS = [
+  {
+    id: "demo:c-major",
+    translationKey: "demo.cMajor",
+    tonic: 60,
+    intervals: MAJOR_INTERVALS,
+    mode: "major",
+  },
+  {
+    id: "demo:g-major",
+    translationKey: "demo.gMajor",
+    tonic: 67,
+    intervals: MAJOR_INTERVALS,
+    mode: "major",
+  },
+  {
+    id: "demo:f-major",
+    translationKey: "demo.fMajor",
+    tonic: 65,
+    intervals: MAJOR_INTERVALS,
+    mode: "major",
+  },
+  {
+    id: "demo:a-minor",
+    translationKey: "demo.aMinor",
+    tonic: 69,
+    intervals: MINOR_INTERVALS,
+    mode: "minor",
+  },
+] as const;
+
+export type DemoSongId = (typeof DEMO_SONGS)[number]["id"];
+export const DEFAULT_DEMO_SONG_ID: DemoSongId = "demo:c-major";
+
+export function isDemoSongId(value: string): value is DemoSongId {
+  return DEMO_SONGS.some((demo) => demo.id === value);
+}
+
 function makeScale(
   start: number,
+  intervals: readonly number[],
   hand: Hand,
   trackId: number,
   timeOffset: number,
+  demoId: DemoSongId,
 ): RawNote[] {
-  const ascending = [0, 2, 4, 5, 7, 9, 11, 12];
+  const ascending = [...intervals, 12];
   const sequence = [...ascending, ...ascending.slice(0, -1).reverse()];
   return sequence.map((interval, index) => ({
-    id: `demo-${trackId}-${index}-${timeOffset}`,
+    id: `${demoId}-${trackId}-${index}-${timeOffset}`,
     midi: start + interval,
     name: noteName(start + interval),
     time: timeOffset + index * 0.48,
@@ -772,11 +812,29 @@ function makeScale(
   }));
 }
 
-export function createDemoSong(): SongData {
-  const right = makeScale(60, "right", 1, 1.2);
-  const bassRoots = [48, 45, 41, 43, 48, 43, 45, 48];
+export function createDemoSong(
+  requestedId: DemoSongId | "demo" = DEFAULT_DEMO_SONG_ID,
+): SongData {
+  const demoId =
+    requestedId === "demo" ? DEFAULT_DEMO_SONG_ID : requestedId;
+  const descriptor =
+    DEMO_SONGS.find((candidate) => candidate.id === demoId) ?? DEMO_SONGS[0];
+  const right = makeScale(
+    descriptor.tonic,
+    descriptor.intervals,
+    "right",
+    1,
+    1.2,
+    descriptor.id,
+  );
+  const tonicBass = descriptor.tonic - 12;
+  const bassOffsets =
+    descriptor.mode === "minor"
+      ? [0, -4, -7, -5, 0, -5, -4, 0]
+      : [0, -3, -7, -5, 0, -5, -3, 0];
+  const bassRoots = bassOffsets.map((offset) => tonicBass + offset);
   const left: RawNote[] = bassRoots.map((midi, index) => ({
-    id: `demo-left-${index}`,
+    id: `${descriptor.id}-left-${index}`,
     midi,
     name: noteName(midi),
     time: 1.2 + index * 0.96,
@@ -789,7 +847,7 @@ export function createDemoSong(): SongData {
   }));
 
   return {
-    name: "Gamme de Do — Démo",
+    name: descriptor.id,
     duration: 9.2,
     bpm: 125,
     ppq: 480,
