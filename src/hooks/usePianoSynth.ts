@@ -4,10 +4,10 @@ function midiToFrequency(midi: number) {
   return 440 * 2 ** ((midi - 69) / 12);
 }
 
-export function usePianoSynth() {
+export function usePianoSynth(initialVolume = 0.72) {
   const contextRef = useRef<AudioContext | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
-  const volumeRef = useRef(0.72);
+  const volumeRef = useRef(Math.max(0, Math.min(1, initialVolume)));
   const activeRef = useRef(
     new Map<
       number,
@@ -144,23 +144,56 @@ export function usePianoSynth() {
   );
 
   const metronomeClick = useCallback(
-    (accent = false) => {
+    (accent = false, volume = 0.75) => {
       const context = ensureContext();
       const destination = masterGainRef.current;
       if (!context || !destination) return;
 
       const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = "square";
-      oscillator.frequency.value = accent ? 1320 : 940;
-      gain.gain.setValueAtTime(accent ? 0.16 : 0.1, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(
-        0.0001,
-        context.currentTime + (accent ? 0.065 : 0.045),
+      const oscillatorGain = context.createGain();
+      const level = Math.max(0, Math.min(1, volume));
+      oscillator.type = "triangle";
+      oscillator.frequency.value = accent ? 1760 : 1180;
+      oscillatorGain.gain.setValueAtTime(
+        Math.max(0.0001, level * (accent ? 0.3 : 0.22)),
+        context.currentTime,
       );
-      oscillator.connect(gain).connect(destination);
+      oscillatorGain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        context.currentTime + (accent ? 0.08 : 0.06),
+      );
+      oscillator.connect(oscillatorGain).connect(destination);
       oscillator.start(context.currentTime);
-      oscillator.stop(context.currentTime + 0.08);
+      oscillator.stop(context.currentTime + 0.09);
+
+      // A very short noise transient gives the beat a clear acoustic "tac"
+      // that remains audible over sustained piano notes.
+      const noiseLength = Math.max(1, Math.floor(context.sampleRate * 0.018));
+      const noiseBuffer = context.createBuffer(
+        1,
+        noiseLength,
+        context.sampleRate,
+      );
+      const noise = noiseBuffer.getChannelData(0);
+      for (let index = 0; index < noise.length; index += 1) {
+        noise[index] = Math.random() * 2 - 1;
+      }
+      const noiseSource = context.createBufferSource();
+      const noiseFilter = context.createBiquadFilter();
+      const noiseGain = context.createGain();
+      noiseSource.buffer = noiseBuffer;
+      noiseFilter.type = "highpass";
+      noiseFilter.frequency.value = accent ? 1500 : 1100;
+      noiseGain.gain.setValueAtTime(
+        Math.max(0.0001, level * (accent ? 0.24 : 0.17)),
+        context.currentTime,
+      );
+      noiseGain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        context.currentTime + 0.022,
+      );
+      noiseSource.connect(noiseFilter).connect(noiseGain).connect(destination);
+      noiseSource.start(context.currentTime);
     },
     [ensureContext],
   );
