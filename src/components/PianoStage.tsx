@@ -7,6 +7,8 @@ import {
   type ReactNode,
 } from "react";
 import * as THREE from "three";
+import { MAX_HAND_SPAN_SEMITONES } from "../lib/music";
+import { compactMidiRangeAround } from "../lib/responsive";
 import { calculatePerformanceMetrics } from "../lib/scoring";
 import type { Hand, PracticeNote, ScoreState } from "../types";
 
@@ -16,6 +18,7 @@ interface PianoStageProps {
   activeMidi: Set<number>;
   currentTargets: PracticeNote[];
   showHands: boolean;
+  compactKeyboard?: boolean;
   viewMode: "perspective" | "flat";
   score: ScoreState;
   onKeyDown: (midi: number) => void;
@@ -41,6 +44,9 @@ const WHITE_WIDTH = 0.38;
 const BLACK_PITCH_CLASSES = new Set([1, 3, 6, 8, 10]);
 const STRIKE_Z = 2.28;
 const UNITS_PER_SECOND = 3.15;
+const HAND_Y = 1.04;
+const HAND_Z = 3.43;
+const SEGMENT_AXIS = new THREE.Vector3(0, 1, 0);
 
 function createKeyboardLayout(): KeyLayout[] {
   const provisional: KeyLayout[] = [];
@@ -71,6 +77,20 @@ function createKeyboardLayout(): KeyLayout[] {
 const KEYBOARD = createKeyboardLayout();
 const KEY_BY_MIDI = new Map(KEYBOARD.map((key) => [key.midi, key]));
 
+function xForMidi(midi: number) {
+  const bounded = Math.max(21, Math.min(108, midi));
+  const low = Math.floor(bounded);
+  const high = Math.ceil(bounded);
+  const lowX = KEY_BY_MIDI.get(low)?.x ?? 0;
+  const highX = KEY_BY_MIDI.get(high)?.x ?? lowX;
+  return THREE.MathUtils.lerp(lowX, highX, bounded - low);
+}
+
+function compactKeysAround(midi: number) {
+  const visibleMidi = new Set(compactMidiRangeAround(midi));
+  return KEYBOARD.filter((key) => visibleMidi.has(key.midi));
+}
+
 function fingerTexture(finger: number, color: string) {
   const canvas = document.createElement("canvas");
   canvas.width = 128;
@@ -96,8 +116,12 @@ function fingerTexture(finger: number, color: string) {
 
 function SceneCamera({
   viewMode,
+  compact,
+  focusX,
 }: {
   viewMode: PianoStageProps["viewMode"];
+  compact: boolean;
+  focusX: number;
 }) {
   const { camera } = useThree();
   const initialized = useRef(false);
@@ -109,12 +133,20 @@ function SceneCamera({
 
   useFrame(() => {
     const flat = viewMode === "flat";
-    const targetPosition = flat
-      ? new THREE.Vector3(0, 18.5, 3.4)
-      : new THREE.Vector3(0, 8.8, 12.7);
-    const lookAt = flat
-      ? new THREE.Vector3(0, 0, -5.8)
-      : new THREE.Vector3(0, 0.25, -5.6);
+    const targetPosition = compact
+      ? flat
+        ? new THREE.Vector3(focusX, 8.6, 3.2)
+        : new THREE.Vector3(focusX, 4.4, 7.4)
+      : flat
+        ? new THREE.Vector3(0, 18.5, 3.4)
+        : new THREE.Vector3(0, 8.8, 12.7);
+    const lookAt = compact
+      ? flat
+        ? new THREE.Vector3(focusX, 0, -0.8)
+        : new THREE.Vector3(focusX, 0.28, -0.45)
+      : flat
+        ? new THREE.Vector3(0, 0, -5.8)
+        : new THREE.Vector3(0, 0.25, -5.6);
 
     if (!initialized.current) {
       camera.position.copy(targetPosition);
@@ -125,7 +157,8 @@ function SceneCamera({
     camera.lookAt(lookAt);
 
     if (camera instanceof THREE.PerspectiveCamera) {
-      camera.fov = THREE.MathUtils.lerp(camera.fov, flat ? 53 : 46, 0.11);
+      const targetFov = compact ? (flat ? 49 : 44) : flat ? 53 : 46;
+      camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.11);
       camera.updateProjectionMatrix();
     }
   });
@@ -223,21 +256,30 @@ function Keyboard({
   currentTargets,
   onKeyDown,
   onKeyUp,
+  keys = KEYBOARD,
 }: Pick<
   PianoStageProps,
   "activeMidi" | "currentTargets" | "onKeyDown" | "onKeyUp"
->) {
+> & { keys?: KeyLayout[] }) {
   const targetedMidi = useMemo(
     () => new Set(currentTargets.map((note) => note.midi)),
     [currentTargets],
   );
+  const keyboardBounds = useMemo(() => {
+    const first = keys[0] ?? KEYBOARD[0];
+    const last = keys[keys.length - 1] ?? KEYBOARD[KEYBOARD.length - 1];
+    return {
+      center: (first.x + last.x) / 2,
+      width: Math.max(WHITE_WIDTH, last.x - first.x + WHITE_WIDTH * 1.4),
+    };
+  }, [keys]);
   return (
     <group>
-      <mesh position={[0, -0.02, 3.45]} receiveShadow>
-        <boxGeometry args={[20.2, 0.22, 2.16]} />
+      <mesh position={[keyboardBounds.center, -0.02, 3.45]} receiveShadow>
+        <boxGeometry args={[keyboardBounds.width, 0.22, 2.16]} />
         <meshStandardMaterial color="#080b0f" metalness={0.4} roughness={0.55} />
       </mesh>
-      {KEYBOARD.filter((key) => !key.black).map((key) => (
+      {keys.filter((key) => !key.black).map((key) => (
         <PianoKey
           key={key.midi}
           layout={key}
@@ -247,7 +289,7 @@ function Keyboard({
           onKeyUp={onKeyUp}
         />
       ))}
-      {KEYBOARD.filter((key) => key.black).map((key) => (
+      {keys.filter((key) => key.black).map((key) => (
         <PianoKey
           key={key.midi}
           layout={key}
@@ -343,15 +385,19 @@ function NoteBlock({
 function NoteRoll({
   notes,
   playhead,
-}: Pick<PianoStageProps, "notes" | "playhead">) {
+  visibleMidi,
+}: Pick<PianoStageProps, "notes" | "playhead"> & {
+  visibleMidi?: Set<number>;
+}) {
   const visible = useMemo(
     () =>
       notes.filter(
         (note) =>
+          (!visibleMidi || visibleMidi.has(note.midi)) &&
           note.time + note.duration >= playhead - 0.8 &&
           note.time <= playhead + 7.6,
       ),
-    [notes, playhead],
+    [notes, playhead, visibleMidi],
   );
   return (
     <group>
@@ -362,26 +408,163 @@ function NoteRoll({
   );
 }
 
+function placeFingerSegment(
+  mesh: THREE.Mesh,
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+) {
+  const direction = end.clone().sub(start);
+  const length = Math.max(0.08, direction.length());
+  mesh.position.copy(start).add(end).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(SEGMENT_AXIS, direction.normalize());
+  mesh.scale.set(1, length, 1);
+}
+
+function IndependentFinger({
+  finger,
+  handDirection,
+  color,
+  target,
+  highlighted,
+  pressed,
+}: {
+  finger: number;
+  handDirection: number;
+  color: string;
+  target: THREE.Vector3;
+  highlighted: boolean;
+  pressed: boolean;
+}) {
+  const proximalRef = useRef<THREE.Mesh>(null);
+  const distalRef = useRef<THREE.Mesh>(null);
+  const tipRef = useRef<THREE.Mesh>(null);
+  const animatedTip = useRef(target.clone());
+  const base = useMemo(
+    () =>
+      new THREE.Vector3(
+        (finger - 3) * 0.22 * handDirection,
+        finger === 1 ? 0.02 : 0.08,
+        finger === 1 ? 0.18 : 0.02,
+      ),
+    [finger, handDirection],
+  );
+
+  useFrame((_, delta) => {
+    const alpha = 1 - Math.exp(-Math.min(delta, 0.05) * 13);
+    animatedTip.current.lerp(target, alpha);
+    const joint = base.clone().lerp(animatedTip.current, 0.52);
+    joint.y += finger === 1 ? 0.16 : highlighted ? 0.27 : 0.2;
+    joint.z += finger === 1 ? 0.05 : 0.1;
+
+    if (proximalRef.current) {
+      placeFingerSegment(proximalRef.current, base, joint);
+    }
+    if (distalRef.current) {
+      placeFingerSegment(distalRef.current, joint, animatedTip.current);
+    }
+    if (tipRef.current) {
+      tipRef.current.position.copy(animatedTip.current);
+      tipRef.current.scale.setScalar(pressed ? 1.18 : 1);
+    }
+  });
+
+  return (
+    <group>
+      {[proximalRef, distalRef].map((ref, index) => (
+        <mesh ref={ref} key={index} castShadow>
+          <capsuleGeometry args={[finger === 1 ? 0.095 : 0.082, 1, 5, 10]} />
+          <meshPhysicalMaterial
+            color={color}
+            transparent
+            opacity={highlighted ? 0.7 : 0.32}
+            emissive={color}
+            emissiveIntensity={highlighted ? 0.68 : 0.12}
+            roughness={0.28}
+          />
+        </mesh>
+      ))}
+      <mesh ref={tipRef}>
+        <sphereGeometry args={[highlighted ? 0.135 : 0.105, 16, 10]} />
+        <meshStandardMaterial
+          color={highlighted ? "#ffffff" : color}
+          emissive={color}
+          emissiveIntensity={pressed ? 1.8 : highlighted ? 1.2 : 0.2}
+          transparent
+          opacity={0.86}
+        />
+      </mesh>
+    </group>
+  );
+}
+
 function VirtualHand({
   hand,
   notes,
+  currentTargets,
+  playhead,
+  activeMidi,
 }: {
   hand: Hand;
   notes: PracticeNote[];
+  currentTargets: PracticeNote[];
+  playhead: number;
+  activeMidi: Set<number>;
 }) {
-  const handNotes = notes.filter((note) => note.hand === hand);
-  if (handNotes.length === 0) return null;
-  const centerMidi =
-    handNotes.reduce((sum, note) => sum + note.midi, 0) / handNotes.length;
-  const centerX = KEY_BY_MIDI.get(Math.round(centerMidi))?.x ?? 0;
-  const color = hand === "right" ? "#b5ff61" : "#8fc7ff";
+  const groupRef = useRef<THREE.Group>(null);
+  const initialized = useRef(false);
+  const allHandNotes = useMemo(
+    () =>
+      notes
+        .filter((note) => note.hand === hand)
+        .sort((a, b) => a.time - b.time || a.midi - b.midi),
+    [hand, notes],
+  );
+  const poseNotes = useMemo(() => {
+    const current = currentTargets.filter((note) => note.hand === hand);
+    if (current.length > 0) return current;
+
+    const upcoming = allHandNotes.find((note) => note.time >= playhead - 0.08);
+    if (upcoming) {
+      return allHandNotes.filter(
+        (note) => Math.abs(note.time - upcoming.time) < 0.045,
+      );
+    }
+
+    const last = allHandNotes[allHandNotes.length - 1];
+    return last
+      ? allHandNotes.filter((note) => Math.abs(note.time - last.time) < 0.045)
+      : [];
+  }, [allHandNotes, currentTargets, hand, playhead]);
+
   const direction = hand === "right" ? 1 : -1;
-  const targetedFingers = new Set(handNotes.map((note) => note.finger));
+  const color = hand === "right" ? "#b5ff61" : "#8fc7ff";
+  const thumbAnchor =
+    poseNotes.reduce((sum, note) => sum + note.handPosition, 0) /
+    Math.max(1, poseNotes.length);
+  const palmMidi = thumbAnchor + direction * 3.5;
+  const palmX = xForMidi(palmMidi);
+  const targetByFinger = new Map(
+    poseNotes.slice(0, 5).map((note) => [note.finger, note]),
+  );
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+    const desired = new THREE.Vector3(palmX, HAND_Y, HAND_Z);
+    if (!initialized.current) {
+      groupRef.current.position.copy(desired);
+      initialized.current = true;
+    } else {
+      const alpha = 1 - Math.exp(-Math.min(delta, 0.05) * 8);
+      groupRef.current.position.lerp(desired, alpha);
+    }
+  });
+
+  if (poseNotes.length === 0) return null;
 
   return (
-    <group position={[centerX, 1.05, 3.02]} rotation={[0.02, 0, -direction * 0.05]}>
-      <mesh position={[-direction * 0.26, 0.2, 0.42]} castShadow>
-        <sphereGeometry args={[0.62, 24, 14]} />
+    <group ref={groupRef} rotation={[0.02, 0, -direction * 0.04]}>
+      <mesh position={[-direction * 0.05, 0.18, 0.23]} castShadow>
+        <sphereGeometry args={[0.63, 24, 14]} />
         <meshPhysicalMaterial
           color={color}
           transparent
@@ -394,37 +577,40 @@ function VirtualHand({
         />
       </mesh>
       {[1, 2, 3, 4, 5].map((finger) => {
-        const spread = (finger - 3) * 0.31 * direction;
-        const length = finger === 3 ? 1.24 : finger === 1 ? 0.8 : 1.08;
-        const highlighted = targetedFingers.has(finger);
+        const note = targetByFinger.get(finger);
+        const restIntervals = [0, 2, 4, 5, 7];
+        const desiredMidi =
+          note?.midi ?? thumbAnchor + direction * restIntervals[finger - 1];
+        const minMidi =
+          direction === 1
+            ? thumbAnchor
+            : thumbAnchor - MAX_HAND_SPAN_SEMITONES;
+        const maxMidi =
+          direction === 1
+            ? thumbAnchor + MAX_HAND_SPAN_SEMITONES
+            : thumbAnchor;
+        const boundedMidi = THREE.MathUtils.clamp(
+          desiredMidi,
+          minMidi,
+          maxMidi,
+        );
+        const layout = KEY_BY_MIDI.get(Math.round(boundedMidi));
+        const pressed = !!note && activeMidi.has(note.midi);
+        const target = new THREE.Vector3(
+          xForMidi(boundedMidi) - palmX,
+          (layout?.black ? 0.46 : pressed ? 0.24 : 0.34) - HAND_Y,
+          (layout?.black ? 2.76 : 2.7) - HAND_Z,
+        );
         return (
-          <group key={finger} position={[spread, 0, -0.12]}>
-            <mesh
-              position={[0, 0.05, -length / 2]}
-              rotation-x={Math.PI / 2}
-              castShadow
-            >
-              <capsuleGeometry args={[0.09, length, 6, 12]} />
-              <meshPhysicalMaterial
-                color={color}
-                transparent
-                opacity={highlighted ? 0.72 : 0.3}
-                emissive={color}
-                emissiveIntensity={highlighted ? 0.85 : 0.12}
-                roughness={0.28}
-              />
-            </mesh>
-            <mesh position={[0, 0, -length - 0.08]}>
-              <sphereGeometry args={[highlighted ? 0.15 : 0.11, 16, 10]} />
-              <meshStandardMaterial
-                color={highlighted ? "#ffffff" : color}
-                emissive={color}
-                emissiveIntensity={highlighted ? 1.5 : 0.2}
-                transparent
-                opacity={0.82}
-              />
-            </mesh>
-          </group>
+          <IndependentFinger
+            key={finger}
+            finger={finger}
+            handDirection={direction}
+            color={color}
+            target={target}
+            highlighted={!!note}
+            pressed={pressed}
+          />
         );
       })}
     </group>
@@ -432,9 +618,37 @@ function VirtualHand({
 }
 
 function Scene(props: PianoStageProps) {
+  const compactKeyboard = props.compactKeyboard ?? false;
+  const compactCenterMidi =
+    props.currentTargets.length > 0
+      ? props.currentTargets.reduce((sum, note) => sum + note.midi, 0) /
+        props.currentTargets.length
+      : 60;
+  const visibleKeys = useMemo(
+    () =>
+      compactKeyboard
+        ? compactKeysAround(compactCenterMidi)
+        : KEYBOARD,
+    [compactCenterMidi, compactKeyboard],
+  );
+  const visibleMidi = useMemo(
+    () =>
+      compactKeyboard
+        ? new Set(visibleKeys.map((key) => key.midi))
+        : undefined,
+    [compactKeyboard, visibleKeys],
+  );
+  const focusX =
+    visibleKeys.reduce((sum, key) => sum + key.x, 0) /
+    Math.max(1, visibleKeys.length);
+
   return (
     <>
-      <SceneCamera viewMode={props.viewMode} />
+      <SceneCamera
+        viewMode={props.viewMode}
+        compact={compactKeyboard}
+        focusX={focusX}
+      />
       <color attach="background" args={["#080c11"]} />
       <fog attach="fog" args={["#080c11", 16, 31]} />
       <ambientLight intensity={0.95} />
@@ -449,17 +663,34 @@ function Scene(props: PianoStageProps) {
       <pointLight position={[-6, 2.5, 1]} intensity={8} color="#458fc9" distance={9} />
       <pointLight position={[6, 2.5, 1]} intensity={8} color="#7fcf45" distance={9} />
       <LaneGrid />
-      <NoteRoll notes={props.notes} playhead={props.playhead} />
+      <NoteRoll
+        notes={props.notes}
+        playhead={props.playhead}
+        visibleMidi={visibleMidi}
+      />
       <Keyboard
         activeMidi={props.activeMidi}
         currentTargets={props.currentTargets}
         onKeyDown={props.onKeyDown}
         onKeyUp={props.onKeyUp}
+        keys={visibleKeys}
       />
       {props.showHands && (
         <>
-          <VirtualHand hand="left" notes={props.currentTargets} />
-          <VirtualHand hand="right" notes={props.currentTargets} />
+          <VirtualHand
+            hand="left"
+            notes={props.notes}
+            currentTargets={props.currentTargets}
+            playhead={props.playhead}
+            activeMidi={props.activeMidi}
+          />
+          <VirtualHand
+            hand="right"
+            notes={props.notes}
+            currentTargets={props.currentTargets}
+            playhead={props.playhead}
+            activeMidi={props.activeMidi}
+          />
         </>
       )}
     </>
