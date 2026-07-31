@@ -14,8 +14,9 @@ The production build is deployed with GitHub Pages:
 
 <https://bugounet.github.io/playalong3D/>
 
-Web MIDI requires a secure context, so use the HTTPS address above, `localhost`,
-Chrome, or Edge when connecting a real keyboard.
+Web MIDI requires a secure context and a compatible browser. Use the HTTPS
+address above, or `localhost` during development. Chrome and Edge are the
+recommended browsers when connecting a real keyboard.
 
 ## Getting started
 
@@ -26,7 +27,8 @@ npm install
 npm run dev
 ```
 
-Then open `http://localhost:5173`. A C major demo is loaded by default. Use
+Then open `http://localhost:5173`. The C major scale is loaded by default. The
+score picker also includes G major, F major, and A minor exercises. Use
 **Import MIDI** to open a `.mid` or `.midi` file.
 
 To connect a piano, select **Connect MIDI**, grant browser access, and use the
@@ -34,11 +36,28 @@ keyboard discovery assistant to play its lowest and highest keys. You can also
 test the app without hardware by clicking the 3D keyboard or using the `A`–`P`
 computer keys.
 
+## Typical practice workflow
+
+1. Open the score picker to select a built-in scale, reopen a locally saved
+   MIDI file, or import another file.
+2. Enable one or two MIDI tracks. Each imported track has an audio preview so
+   it can be identified even when the embedded track name is unhelpful.
+3. Choose the left hand, right hand, or both hands, and select **In time** or
+   **Wait for note** mode. A single MIDI track can be analysed as a two-hand
+   piano part.
+4. Optionally enable the virtual hands, metronome, or progressive loop, then
+   start playback. The metronome control changes both the music tempo and its
+   own independent click volume.
+5. At the end of a normal run, review the timing, correct notes, missed notes,
+   wrong notes, and best streak. Progressive loops show shorter pass/retry
+   feedback instead of the full summary.
+
 ## Features
 
 - Standard MIDI File import and parsing;
-- a private browser-local MIDI library for reopening four built-in scales or
-  previously imported files without uploading them to a server;
+- four built-in scale exercises: C major, G major, F major, and A minor;
+- a private browser-local MIDI library for reopening imported files without
+  uploading them to a server;
 - per-song persistence for tempo, score, practiced hands, virtual hands,
   progressive loops, metronome state and volume, plus global persistence for
   language, 2D/3D view, master volume, and the last opened score;
@@ -65,7 +84,39 @@ computer keys.
   Pages.
 
 On phone-sized screens, the keyboard follows the next notes using at most eight
-visible keys, and practice is limited to one hand at a time.
+visible MIDI keys, and practice is limited to one hand at a time. The
+both-hands control is disabled automatically.
+
+## Scoring and progressive loops
+
+Precision combines timing quality with note accuracy:
+
+```text
+precision = timing quality × correct notes / (correct + missed + wrong)
+```
+
+This means a perfectly timed performance cannot receive 100/100 if it contains
+wrong or missed notes. In progressive-loop mode, the selected measures start at
+50% of the original tempo. A score of at least 95/100 advances the next pass by
+5%; a lower score repeats the same tempo. The loop stops accelerating at 100%.
+
+## Local data and reset controls
+
+Playalong 3D has no application server. Data remains in the current browser
+profile and is not synchronized to another browser or device.
+
+| Storage | Data |
+| --- | --- |
+| `localStorage`, global | Language, 2D/3D view, master volume, sound state, and last opened score |
+| `localStorage`, per score | Tempo, latest completed score, practiced hand, practice mode, virtual hands, progressive-loop range/state, and metronome state/volume |
+| `localStorage`, per MIDI device | Discovered lowest/highest key and keyboard size |
+| IndexedDB | The original bytes and metadata of imported MIDI files |
+
+The cog button in the top bar opens **Settings and storage**. **Reset
+preferences** removes Playalong settings, scores, and MIDI keyboard
+calibrations while retaining imported MIDI files. **Clear all local data**
+also removes the browser-local MIDI library. Both actions require an additional
+confirmation.
 
 ## Key and fingering analysis
 
@@ -91,8 +142,7 @@ analysis before assigning fingers:
 
 The calculation is deterministic: the same file and selected tracks always
 produce the same fingerings. Possible future improvements include configurable
-biomechanical constraints such as hand size and maximum reach, plus an editor
-for locking preferred fingerings.
+hand-size profiles and an editor for locking preferred fingerings.
 
 ## Architecture
 
@@ -101,6 +151,8 @@ for locking preferred fingerings.
 - `@tonejs/midi` for file parsing;
 - Web MIDI API for hardware input;
 - Web Audio API for playback, previews, and the metronome;
+- `localStorage` for global and per-score preferences;
+- IndexedDB for imported MIDI files;
 - pure music and scoring logic in `src/lib`, tested with Vitest.
 
 ## Validation and production build
@@ -114,4 +166,5 @@ The production files are generated in `dist/`.
 
 Pushes to `main` automatically trigger the workflow in
 `.github/workflows/deploy-pages.yml`, which builds and publishes the app to
-GitHub Pages.
+GitHub Pages. The production build uses `/playalong3D/` as its Vite base path;
+the development server continues to use `/`.
