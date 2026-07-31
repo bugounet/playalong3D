@@ -37,13 +37,20 @@ computer keys.
 ## Features
 
 - Standard MIDI File import and parsing;
+- a private browser-local MIDI library for reopening four built-in scales or
+  previously imported files without uploading them to a server;
+- per-song persistence for tempo, score, practiced hands, virtual hands,
+  progressive loops, metronome state and volume, plus global persistence for
+  language, 2D/3D view, master volume, and the last opened score;
+- a storage settings panel that can reset preferences separately or clear all
+  locally saved data;
 - selection of one or two tracks, with automatic or manual left/right-hand
   assignment;
 - support for a single piano track containing both hands;
 - left hand, right hand, or both-hands practice;
 - 3D perspective and flat 2D piano-roll views;
 - colored falling notes, finger numbers, active keys, and optional virtual
-  hands;
+  hands with independently articulated fingers;
 - **In time** mode with timing-distance scoring;
 - **Wait for note** mode, including chord handling;
 - progressive measure loops from 50% to 100% tempo in 5% steps, requiring a
@@ -51,10 +58,14 @@ computer keys.
 - Web MIDI input, an on-screen piano, and Web Audio MIDI playback;
 - per-track audio previews to help identify poorly named MIDI tracks;
 - MIDI keyboard range discovery;
-- an accented metronome and music-tempo control from 25% to 200%;
+- an accented metronome with an independent volume control and music-tempo
+  control from 25% to 200%;
 - performance summaries combining timing, wrong notes, and missed notes;
 - a responsive, localized interface and static deployment through GitHub
   Pages.
+
+On phone-sized screens, the keyboard follows the next notes using at most eight
+visible keys, and practice is limited to one hand at a time.
 
 ## Key and fingering analysis
 
@@ -65,14 +76,18 @@ analysis before assigning fingers:
 2. A twelve-pitch-class histogram is weighted by note duration and velocity.
 3. All 24 major and minor keys are compared using Krumhansl–Schmuckler
    profiles. The closest profile determines the local key and confidence.
-4. Automatic tracks are assigned by register. A mixed piano track is split
-   around middle C.
+4. Automatic tracks are assigned by register. A mixed piano track uses
+   onset-based hand assignment with pitch ownership and short-phrase memory,
+   preventing rapid left/right flicker around middle C.
 5. Dynamic programming evaluates all five fingers for each hand and minimizes
    a cost combining hand-position movement, reach, same-finger repetition,
    crossings, thumb passages, thumb use on black keys, and conventional
    fingerings for the detected scale.
-6. A chord-specific pass ensures distinct, ordered fingers for simultaneous
-   notes.
+6. Crossings are limited to two finger positions. During a passage such as
+   `3 → 1`, the current hand anchor is held for the crossing and the palm moves
+   to its new anchor immediately afterwards.
+7. A chord-specific pass ensures distinct, ordered fingers for simultaneous
+   notes, with a maximum thumb-to-pinky span of one octave.
 
 The calculation is deterministic: the same file and selected tracks always
 produce the same fingerings. Possible future improvements include configurable

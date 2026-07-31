@@ -18,9 +18,11 @@ import {
   Redo2,
   Repeat2,
   RotateCcw,
+  Settings,
   SlidersHorizontal,
   Sparkles,
   Timer,
+  Trash2,
   Upload,
   Volume2,
   VolumeX,
@@ -45,10 +47,29 @@ import {
   type Language,
 } from "./i18n";
 import {
+  DEFAULT_DEMO_SONG_ID,
+  DEMO_SONGS,
   annotateForPractice,
   createDemoSong,
+  isDemoSongId,
   parseMidiFile,
+  type DemoSongId,
 } from "./lib/music";
+import {
+  clearLocalPreferences,
+  countStoredSongPreferences,
+  loadGlobalPreferences,
+  loadSongPreferences,
+  saveGlobalPreferences,
+  saveSongPreferences,
+} from "./lib/preferences";
+import {
+  clearStoredMidiFiles,
+  listStoredMidiFiles,
+  loadStoredMidiFile,
+  saveStoredMidiFile,
+  type StoredMidiSummary,
+} from "./lib/songLibrary";
 import {
   calculatePerformanceMetrics,
   type PerformanceMetrics,
@@ -128,16 +149,46 @@ function formatTime(seconds: number) {
 }
 
 function groupOnsets(notes: PracticeNote[]) {
-  const groups = new Map<number, PracticeNote[]>();
-  for (const note of [...notes].sort((a, b) => a.time - b.time || a.midi - b.midi)) {
-    const key = Math.round(note.time * 40);
-    groups.set(key, [...(groups.get(key) ?? []), note]);
+  const groups: PracticeNote[][] = [];
+  for (const note of [...notes].sort(
+    (a, b) => a.time - b.time || a.midi - b.midi,
+  )) {
+    const current = groups[groups.length - 1];
+    if (!current || note.time - current[0].time >= 0.045) {
+      groups.push([note]);
+    } else {
+      current.push(note);
+    }
   }
-  return Array.from(groups.values()).sort((a, b) => a[0].time - b[0].time);
+  return groups;
+}
+
+function useMobileLayout() {
+  const query = "(max-width: 760px)";
+  const [mobile, setMobile] = useState(
+    () => window.matchMedia(query).matches,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMobile(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return mobile;
 }
 
 export default function App() {
-  const [language, setLanguage] = useState<Language>(() => getInitialLanguage());
+  const mobileLayout = useMobileLayout();
+  const [initialGlobalPreferences] = useState(loadGlobalPreferences);
+  const [initialDemoPreferences] = useState(() =>
+    loadSongPreferences(DEFAULT_DEMO_SONG_ID),
+  );
+  const [language, setLanguage] = useState<Language>(
+    () => initialGlobalPreferences.language ?? getInitialLanguage(),
+  );
   const t = useCallback(
     (key: string, variables: Record<string, string | number> = {}) =>
       translate(language, key, variables),
@@ -148,27 +199,51 @@ export default function App() {
   const [loadingStatusKey, setLoadingStatusKey] = useState("loading.scene");
   const [song, setSong] = useState<SongData>(() => createDemoSong());
   const [tracks, setTracks] = useState<TrackInfo[]>(song.tracks);
-  const [handMode, setHandMode] = useState<HandMode>("both");
-  const [practiceMode, setPracticeMode] = useState<PracticeMode>("tempo");
+  const [handMode, setHandMode] = useState<HandMode>(() => {
+    const stored = initialDemoPreferences.handMode ?? "both";
+    return mobileLayout && stored === "both" ? "right" : stored;
+  });
+  const [practiceMode, setPracticeMode] = useState<PracticeMode>(
+    () => initialDemoPreferences.practiceMode ?? "tempo",
+  );
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
-  const [tempoPercent, setTempoPercent] = useState(100);
-  const [showHands, setShowHands] = useState(false);
-  const [loopEnabled, setLoopEnabled] = useState(false);
-  const [loopStartBar, setLoopStartBar] = useState(1);
-  const [loopEndBar, setLoopEndBar] = useState(2);
+  const [tempoPercent, setTempoPercent] = useState(
+    () => initialDemoPreferences.tempoPercent ?? 100,
+  );
+  const [showHands, setShowHands] = useState(
+    () => initialDemoPreferences.showHands ?? false,
+  );
+  const [loopEnabled, setLoopEnabled] = useState(
+    () => initialDemoPreferences.loopEnabled ?? false,
+  );
+  const [loopStartBar, setLoopStartBar] = useState(
+    () => initialDemoPreferences.loopStartBar ?? 1,
+  );
+  const [loopEndBar, setLoopEndBar] = useState(
+    () => initialDemoPreferences.loopEndBar ?? 2,
+  );
   const [score, setScore] = useState<ScoreState>(EMPTY_SCORE);
+  const [lastScore, setLastScore] = useState<ScoreState>(
+    () => initialDemoPreferences.score ?? EMPTY_SCORE,
+  );
   const [activeMidi, setActiveMidi] = useState<Set<number>>(new Set());
   const [waitIndex, setWaitIndex] = useState(0);
   const [waitHits, setWaitHits] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState("");
   const [loadingFile, setLoadingFile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [midiPlaybackEnabled, setMidiPlaybackEnabled] = useState(true);
-  const [masterVolume, setMasterVolumeState] = useState(72);
+  const [midiPlaybackEnabled, setMidiPlaybackEnabled] = useState(
+    () => initialGlobalPreferences.soundEnabled ?? true,
+  );
+  const [masterVolume, setMasterVolumeState] = useState(
+    () => initialGlobalPreferences.masterVolume ?? 72,
+  );
   const [volumePanelOpen, setVolumePanelOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"perspective" | "flat">("perspective");
+  const [viewMode, setViewMode] = useState<"perspective" | "flat">(
+    () => initialGlobalPreferences.viewMode ?? "perspective",
+  );
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [discoveryStep, setDiscoveryStep] = useState<DiscoveryStep>("low");
   const [discoveryLowNote, setDiscoveryLowNote] = useState<number | null>(null);
@@ -177,10 +252,30 @@ export default function App() {
   const [performanceSummary, setPerformanceSummary] =
     useState<PerformanceSummaryData | null>(null);
   const [loopFeedback, setLoopFeedback] = useState<LoopFeedback | null>(null);
-  const [metronomeEnabled, setMetronomeEnabled] = useState(false);
+  const [metronomeEnabled, setMetronomeEnabled] = useState(
+    () => initialDemoPreferences.metronomeEnabled ?? false,
+  );
+  const [metronomeVolume, setMetronomeVolume] = useState(
+    () => initialDemoPreferences.metronomeVolume ?? 75,
+  );
   const [metronomePanelOpen, setMetronomePanelOpen] = useState(false);
   const [previewTrackId, setPreviewTrackId] = useState<number | null>(null);
+  const [songLibraryOpen, setSongLibraryOpen] = useState(false);
+  const [storedMidiFiles, setStoredMidiFiles] = useState<StoredMidiSummary[]>([]);
+  const [activeSongId, setActiveSongId] = useState<string>(
+    DEFAULT_DEMO_SONG_ID,
+  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [storageConfirmation, setStorageConfirmation] = useState<
+    "preferences" | "all" | null
+  >(null);
+  const [storedPreferenceCount, setStoredPreferenceCount] = useState(
+    countStoredSongPreferences,
+  );
+  const [clearingStorage, setClearingStorage] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const songLibraryRef = useRef<HTMLDivElement>(null);
   const playheadRef = useRef(playhead);
   const scoreRef = useRef(score);
   const hitIdsRef = useRef(new Set<string>());
@@ -193,6 +288,7 @@ export default function App() {
   const promptedMidiDevicesRef = useRef(new Set<string>());
   const nextMetronomeBeatRef = useRef(0);
   const previewTimersRef = useRef(new Set<number>());
+  const restoredLastSongRef = useRef(false);
   const {
     noteOn,
     noteOff,
@@ -201,7 +297,17 @@ export default function App() {
     setMasterVolume,
     metronomeClick,
     ensureContext,
-  } = usePianoSynth();
+  } = usePianoSynth(
+    midiPlaybackEnabled ? masterVolume / 100 : 0,
+  );
+
+  const refreshSongLibrary = useCallback(async () => {
+    try {
+      setStoredMidiFiles(await listStoredMidiFiles());
+    } catch {
+      setStoredMidiFiles([]);
+    }
+  }, []);
 
   useEffect(() => {
     const stages = [
@@ -223,10 +329,69 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void refreshSongLibrary();
+  }, [refreshSongLibrary]);
+
+  useEffect(() => {
     window.localStorage.setItem("playalong3d-language", language);
     document.documentElement.lang = language;
     document.title = "Playalong 3D";
   }, [language]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    saveGlobalPreferences({
+      language,
+      viewMode,
+      masterVolume,
+      soundEnabled: midiPlaybackEnabled,
+      lastSongId: activeSongId,
+    });
+  }, [
+    activeSongId,
+    language,
+    masterVolume,
+    midiPlaybackEnabled,
+    preferencesReady,
+    viewMode,
+  ]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    const timer = window.setTimeout(() => {
+      saveSongPreferences(activeSongId, {
+        tempoPercent,
+        score: lastScore,
+        showHands,
+        loopEnabled,
+        loopStartBar,
+        loopEndBar,
+        metronomeEnabled,
+        metronomeVolume,
+        handMode,
+        practiceMode,
+      });
+      setStoredPreferenceCount(countStoredSongPreferences());
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeSongId,
+    handMode,
+    lastScore,
+    loopEnabled,
+    loopEndBar,
+    loopStartBar,
+    metronomeEnabled,
+    metronomeVolume,
+    practiceMode,
+    preferencesReady,
+    showHands,
+    tempoPercent,
+  ]);
+
+  useEffect(() => {
+    if (mobileLayout && handMode === "both") setHandMode("right");
+  }, [handMode, mobileLayout]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -234,10 +399,26 @@ export default function App() {
         setHelpOpen(false);
         setVolumePanelOpen(false);
         setMetronomePanelOpen(false);
+        setSongLibraryOpen(false);
+        setSettingsOpen(false);
+        setStorageConfirmation(null);
       }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
+
+  useEffect(() => {
+    const closeSongLibrary = (event: PointerEvent) => {
+      if (
+        songLibraryRef.current &&
+        !songLibraryRef.current.contains(event.target as Node)
+      ) {
+        setSongLibraryOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", closeSongLibrary);
+    return () => window.removeEventListener("pointerdown", closeSongLibrary);
   }, []);
 
   const analysis = useMemo(
@@ -424,6 +605,7 @@ export default function App() {
 
   const evaluateLoop = useCallback(() => {
     const attempt = scoreRef.current;
+    setLastScore({ ...attempt });
     const precision = calculatePerformanceMetrics(attempt).precision;
     const passed = precision >= 95;
 
@@ -457,6 +639,7 @@ export default function App() {
 
   const finishPerformance = useCallback(() => {
     const finalScore = { ...scoreRef.current };
+    setLastScore(finalScore);
     setPerformanceSummary({
       score: finalScore,
       metrics: calculatePerformanceMetrics(finalScore),
@@ -510,13 +693,22 @@ export default function App() {
       while (beat <= to + 0.006) {
         if (beat >= from - 0.012) {
           const beatIndex = Math.round(beat / beatDuration);
-          metronomeClick(beatIndex % song.timeSignature[0] === 0);
+          metronomeClick(
+            beatIndex % song.timeSignature[0] === 0,
+            metronomeVolume / 100,
+          );
         }
         beat += beatDuration;
       }
       nextMetronomeBeatRef.current = beat;
     },
-    [beatDuration, metronomeClick, metronomeEnabled, song.timeSignature],
+    [
+      beatDuration,
+      metronomeClick,
+      metronomeEnabled,
+      metronomeVolume,
+      song.timeSignature,
+    ],
   );
 
   useEffect(() => {
@@ -893,6 +1085,103 @@ export default function App() {
     return upcoming ?? [];
   }, [onsetGroups, playhead, practiceMode, waitIndex]);
 
+  const applyLoadedSong = useCallback(
+    (parsed: SongData, sourceId: string) => {
+      const preferences = loadSongPreferences(sourceId);
+      const parsedMeasureDuration =
+        (60 / parsed.bpm) * parsed.timeSignature[0];
+      const parsedTotalBars = Math.max(
+        1,
+        Math.ceil(parsed.duration / parsedMeasureDuration),
+      );
+      const restoredHandMode = preferences.handMode ?? (
+        mobileLayout ? "right" : "both"
+      );
+      const restoredScore = preferences.score ?? EMPTY_SCORE;
+      stopTrackPreview();
+      stopAll();
+      setSong(parsed);
+      setTracks(parsed.tracks);
+      setHandMode(
+        mobileLayout && restoredHandMode === "both"
+          ? "right"
+          : restoredHandMode,
+      );
+      setPracticeMode(preferences.practiceMode ?? "tempo");
+      setShowHands(preferences.showHands ?? false);
+      setLoopEnabled(preferences.loopEnabled ?? false);
+      setLoopStartBar(
+        Math.min(parsedTotalBars, preferences.loopStartBar ?? 1),
+      );
+      setLoopEndBar(
+        Math.min(
+          parsedTotalBars,
+          Math.max(
+            preferences.loopStartBar ?? 1,
+            preferences.loopEndBar ?? Math.min(2, parsedTotalBars),
+          ),
+        ),
+      );
+      setTempoPercent(preferences.tempoPercent ?? 100);
+      setMetronomeEnabled(preferences.metronomeEnabled ?? false);
+      setMetronomeVolume(preferences.metronomeVolume ?? 75);
+      setLastScore(restoredScore);
+      setScore(EMPTY_SCORE);
+      scoreRef.current = EMPTY_SCORE;
+      setPlaying(false);
+      setPlayhead(0);
+      playheadRef.current = 0;
+      audioCursorRef.current = 0;
+      setPerformanceSummary(null);
+      setLoopFeedback(null);
+      setActiveSongId(sourceId);
+      setSongLibraryOpen(false);
+      syncMetronome(0);
+    },
+    [mobileLayout, stopAll, stopTrackPreview, syncMetronome],
+  );
+
+  useEffect(() => {
+    if (restoredLastSongRef.current) return;
+    restoredLastSongRef.current = true;
+
+    const restoreLastSong = async () => {
+      const savedId =
+        initialGlobalPreferences.lastSongId === "demo"
+          ? DEFAULT_DEMO_SONG_ID
+          : initialGlobalPreferences.lastSongId;
+      if (!savedId || savedId === DEFAULT_DEMO_SONG_ID) {
+        setPreferencesReady(true);
+        return;
+      }
+
+      try {
+        if (isDemoSongId(savedId)) {
+          applyLoadedSong(createDemoSong(savedId), savedId);
+        } else {
+          const file = await loadStoredMidiFile(savedId);
+          const parsed = await parseMidiFile(file);
+          if (parsed.tracks.length === 0) throw new Error("empty");
+          applyLoadedSong(parsed, savedId);
+        }
+      } catch {
+        applyLoadedSong(
+          createDemoSong(DEFAULT_DEMO_SONG_ID),
+          DEFAULT_DEMO_SONG_ID,
+        );
+        await refreshSongLibrary();
+      } finally {
+        setPreferencesReady(true);
+      }
+    };
+
+    void restoreLastSong();
+  }, [
+    applyLoadedSong,
+    initialGlobalPreferences.lastSongId,
+    refreshSongLibrary,
+  ]);
+
   const handleFile = useCallback(
     async (file?: File) => {
       if (!file) return;
@@ -901,28 +1190,55 @@ export default function App() {
         return;
       }
       setLoadingFile(true);
-      stopTrackPreview();
       try {
         const parsed = await parseMidiFile(file);
         if (parsed.tracks.length === 0) throw new Error("empty");
-        setSong(parsed);
-        setTracks(parsed.tracks);
-        setLoopStartBar(1);
-        setLoopEndBar(Math.min(2, Math.max(1, Math.ceil(parsed.duration / 2))));
-        setTempoPercent(100);
-        syncAudioCursor(0);
-        syncMetronome(0);
-        setPlaying(false);
-        setPlayhead(0);
-        showNotice(t("notice.loaded", { count: parsed.rawNotes.length }));
+        applyLoadedSong(parsed, `session:${file.name}`);
+        try {
+          const stored = await saveStoredMidiFile(file);
+          setActiveSongId(stored.id);
+          await refreshSongLibrary();
+          showNotice(t("notice.loaded", { count: parsed.rawNotes.length }));
+        } catch {
+          showNotice(t("notice.loadedUnsaved", {
+            count: parsed.rawNotes.length,
+          }));
+        }
       } catch {
         showNotice(t("notice.emptyMidi"));
       } finally {
         setLoadingFile(false);
       }
     },
-    [showNotice, stopTrackPreview, syncAudioCursor, syncMetronome, t],
+    [applyLoadedSong, refreshSongLibrary, showNotice, t],
   );
+
+  const selectDemoSong = (demoId: DemoSongId) => {
+    if (demoId === activeSongId) {
+      setSongLibraryOpen(false);
+      return;
+    }
+    applyLoadedSong(createDemoSong(demoId), demoId);
+  };
+
+  const selectStoredSong = async (stored: StoredMidiSummary) => {
+    if (stored.id === activeSongId) {
+      setSongLibraryOpen(false);
+      return;
+    }
+    setLoadingFile(true);
+    try {
+      const file = await loadStoredMidiFile(stored.id);
+      const parsed = await parseMidiFile(file);
+      if (parsed.tracks.length === 0) throw new Error("empty");
+      applyLoadedSong(parsed, stored.id);
+    } catch {
+      showNotice(t("library.loadFailed"));
+      await refreshSongLibrary();
+    } finally {
+      setLoadingFile(false);
+    }
+  };
 
   const toggleTrack = (trackId: number) => {
     setTracks((current) => {
@@ -997,8 +1313,11 @@ export default function App() {
   ).length;
   const performanceMetrics = calculatePerformanceMetrics(score);
   const effectiveBpm = Math.round((song.bpm * tempoPercent) / 100);
-  const isDemoSong = song.name === "Gamme de Do — Démo";
-  const displaySongName = isDemoSong ? t("demo.song") : song.name;
+  const activeDemo = DEMO_SONGS.find((demo) => demo.id === activeSongId);
+  const isDemoSong = Boolean(activeDemo);
+  const displaySongName = activeDemo
+    ? t(activeDemo.translationKey)
+    : song.name;
   const displayTrackName = (track: TrackInfo, index: number) => {
     if (isDemoSong) return track.id === 0 ? t("demo.left") : t("demo.right");
     return track.name || t("track.name", { number: index + 1 });
@@ -1031,6 +1350,23 @@ export default function App() {
     syncMetronome(playheadRef.current);
   };
 
+  const clearStoredData = async (scope: "preferences" | "all") => {
+    if (storageConfirmation !== scope) {
+      setStorageConfirmation(scope);
+      return;
+    }
+
+    setClearingStorage(true);
+    try {
+      if (scope === "all") await clearStoredMidiFiles();
+      clearLocalPreferences();
+      window.location.reload();
+    } catch {
+      setClearingStorage(false);
+      showNotice(t("settings.clearFailed"));
+    }
+  };
+
   return (
     <div
       className="app"
@@ -1060,16 +1396,82 @@ export default function App() {
           <div className="brand-mark"><Music2 size={19} /></div>
           <span>PLAYALONG</span><b>3D</b>
         </div>
-        <div className="song-summary">
-          <div className="song-icon"><Music2 size={17} /></div>
-          <div>
-            <strong>{displaySongName}</strong>
-            <span>
-              {song.bpm} BPM · {song.timeSignature.join("/")} ·{" "}
-              {practiceNotes.length} {t("score.notes").toLowerCase()}
-            </span>
-          </div>
-          <ChevronDown size={16} />
+        <div className="song-library-wrap" ref={songLibraryRef}>
+          <button
+            className="song-summary"
+            onClick={() => setSongLibraryOpen((current) => !current)}
+            aria-label={t("library.open")}
+            aria-expanded={songLibraryOpen}
+            aria-haspopup="menu"
+          >
+            <div className="song-icon"><Music2 size={17} /></div>
+            <div>
+              <strong>{displaySongName}</strong>
+              <span>
+                {song.bpm} BPM · {song.timeSignature.join("/")} ·{" "}
+                {practiceNotes.length} {t("score.notes").toLowerCase()}
+              </span>
+            </div>
+            <ChevronDown
+              className={songLibraryOpen ? "open" : ""}
+              size={16}
+            />
+          </button>
+          {songLibraryOpen && (
+            <div className="song-library-popover" role="menu">
+              <span className="song-library-title">{t("library.title")}</span>
+              {DEMO_SONGS.map((demo) => (
+                <button
+                  className={`song-library-item ${
+                    activeSongId === demo.id ? "active" : ""
+                  }`}
+                  onClick={() => selectDemoSong(demo.id)}
+                  role="menuitem"
+                  key={demo.id}
+                >
+                  <i><Music2 size={15} /></i>
+                  <span>
+                    <strong>{t(demo.translationKey)}</strong>
+                    <small>{t("library.demoHint")}</small>
+                  </span>
+                  {activeSongId === demo.id && <b />}
+                </button>
+              ))}
+              {storedMidiFiles.map((stored) => (
+                <button
+                  className={`song-library-item ${
+                    activeSongId === stored.id ? "active" : ""
+                  }`}
+                  onClick={() => void selectStoredSong(stored)}
+                  role="menuitem"
+                  key={stored.id}
+                >
+                  <i><Music2 size={15} /></i>
+                  <span>
+                    <strong>{stored.name.replace(/\.(midi?|smf)$/i, "")}</strong>
+                    <small>{t("library.localFile", {
+                      size: Math.max(1, Math.round(stored.size / 1024)),
+                    })}</small>
+                  </span>
+                  {activeSongId === stored.id && <b />}
+                </button>
+              ))}
+              {storedMidiFiles.length === 0 && (
+                <p>{t("library.empty")}</p>
+              )}
+              <button
+                className="song-library-import"
+                onClick={() => {
+                  setSongLibraryOpen(false);
+                  fileInputRef.current?.click();
+                }}
+                role="menuitem"
+              >
+                <Upload size={14} />
+                {t("library.import")}
+              </button>
+            </div>
+          )}
         </div>
         <div className="top-actions">
           {midi.connected ? (
@@ -1138,7 +1540,18 @@ export default function App() {
           >
             <CircleHelp size={19} />
           </button>
-          <button className="avatar" aria-label={t("top.profile")}>SF</button>
+          <button
+            className="icon-button settings-button"
+            aria-label={t("settings.open")}
+            title={t("settings.title")}
+            onClick={() => {
+              setStoredPreferenceCount(countStoredSongPreferences());
+              setStorageConfirmation(null);
+              setSettingsOpen(true);
+            }}
+          >
+            <Settings size={19} />
+          </button>
         </div>
       </header>
 
@@ -1185,7 +1598,13 @@ export default function App() {
               <button
                 key={value}
                 className={handMode === value ? "active" : ""}
+                disabled={mobileLayout && value === "both"}
                 onClick={() => setHandMode(value)}
+                title={
+                  mobileLayout && value === "both"
+                    ? t("hand.mobileSingleOnly")
+                    : undefined
+                }
               >
                 {label}
               </button>
@@ -1401,6 +1820,7 @@ export default function App() {
           activeMidi={activeMidi}
           currentTargets={currentTargets}
           showHands={showHands}
+          compactKeyboard={mobileLayout}
           viewMode={viewMode}
           score={score}
           onKeyDown={registerNoteOn}
@@ -1532,7 +1952,11 @@ export default function App() {
                       onClick={() => {
                         ensureContext();
                         syncMetronome(playheadRef.current);
-                        setMetronomeEnabled((current) => !current);
+                        const nextEnabled = !metronomeEnabled;
+                        setMetronomeEnabled(nextEnabled);
+                        if (nextEnabled) {
+                          metronomeClick(true, metronomeVolume / 100);
+                        }
                       }}
                     >
                       <i />
@@ -1574,6 +1998,32 @@ export default function App() {
                     <span>25 %</span>
                     <strong>{t("metronome.original", { value: tempoPercent })}</strong>
                     <span>200 %</span>
+                  </div>
+                  <div className="metronome-volume">
+                    <div>
+                      <span>{t("metronome.volume")}</span>
+                      <strong>{metronomeVolume}%</strong>
+                    </div>
+                    <div className="metronome-volume-row">
+                      <VolumeX size={13} />
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={metronomeVolume}
+                        onChange={(event) => {
+                          const nextVolume = Number(event.target.value);
+                          setMetronomeVolume(nextVolume);
+                          if (metronomeEnabled && nextVolume > 0) {
+                            ensureContext();
+                            metronomeClick(false, nextVolume / 100);
+                          }
+                        }}
+                        aria-label={t("metronome.volume")}
+                      />
+                      <Volume2 size={14} />
+                    </div>
                   </div>
                   {loopEnabled && (
                     <p>{t("metronome.loopLocked")}</p>
@@ -1659,6 +2109,112 @@ export default function App() {
           <div>
             <strong>{loopFeedback.title}</strong>
             <span>{loopFeedback.detail}</span>
+          </div>
+        </div>
+      )}
+      {settingsOpen && (
+        <div
+          className="settings-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSettingsOpen(false);
+              setStorageConfirmation(null);
+            }
+          }}
+        >
+          <div className="settings-panel">
+            <div className="settings-head">
+              <div>
+                <span className="settings-kicker">{t("settings.kicker")}</span>
+                <h2 id="settings-title">{t("settings.title")}</h2>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => {
+                  setSettingsOpen(false);
+                  setStorageConfirmation(null);
+                }}
+                aria-label={t("settings.close")}
+              >
+                <X size={19} />
+              </button>
+            </div>
+            <div className="settings-body">
+              <div className="storage-privacy">
+                <Settings size={19} />
+                <div>
+                  <strong>{t("settings.localOnly")}</strong>
+                  <p>{t("settings.privacy")}</p>
+                </div>
+              </div>
+              <div className="storage-stats">
+                <div>
+                  <span>{t("settings.midiFiles")}</span>
+                  <strong>{storedMidiFiles.length}</strong>
+                </div>
+                <div>
+                  <span>{t("settings.songProfiles")}</span>
+                  <strong>{storedPreferenceCount}</strong>
+                </div>
+              </div>
+              <div className="storage-actions">
+                <section>
+                  <div>
+                    <strong>{t("settings.clearPreferences")}</strong>
+                    <p>{t("settings.clearPreferencesHint")}</p>
+                  </div>
+                  <button
+                    className={
+                      storageConfirmation === "preferences"
+                        ? "danger-action confirming"
+                        : "danger-action"
+                    }
+                    disabled={clearingStorage}
+                    onClick={() => void clearStoredData("preferences")}
+                  >
+                    <Trash2 size={14} />
+                    {storageConfirmation === "preferences"
+                      ? t("settings.confirm")
+                      : t("settings.clear")}
+                  </button>
+                </section>
+                <section>
+                  <div>
+                    <strong>{t("settings.clearAll")}</strong>
+                    <p>{t("settings.clearAllHint")}</p>
+                  </div>
+                  <button
+                    className={
+                      storageConfirmation === "all"
+                        ? "danger-action confirming"
+                        : "danger-action"
+                    }
+                    disabled={clearingStorage}
+                    onClick={() => void clearStoredData("all")}
+                  >
+                    {clearingStorage && storageConfirmation === "all" ? (
+                      <LoaderCircle className="spin" size={14} />
+                    ) : (
+                      <Trash2 size={14} />
+                    )}
+                    {storageConfirmation === "all"
+                      ? t("settings.confirm")
+                      : t("settings.clear")}
+                  </button>
+                </section>
+              </div>
+              {storageConfirmation && !clearingStorage && (
+                <div className="storage-confirmation">
+                  <span>{t("settings.confirmHint")}</span>
+                  <button onClick={() => setStorageConfirmation(null)}>
+                    {t("settings.cancel")}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
