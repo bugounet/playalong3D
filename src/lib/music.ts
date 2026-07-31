@@ -47,6 +47,8 @@ const MINOR_PROFILE = [
 ];
 const MAJOR_INTERVALS = [0, 2, 4, 5, 7, 9, 11];
 const MINOR_INTERVALS = [0, 2, 3, 5, 7, 8, 10];
+export const MAX_HAND_SPAN_SEMITONES = 12;
+export const MAX_CROSSING_FINGER_DISTANCE = 2;
 
 export function noteName(midi: number) {
   return `${NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`;
@@ -167,6 +169,24 @@ function windowForNote(note: RawNote, windows: HarmonicWindow[]) {
   );
 }
 
+function groupNotesByOnset<T extends RawNote>(
+  notes: T[],
+  tolerance = 0.045,
+) {
+  const groups: T[][] = [];
+  for (const note of [...notes].sort(
+    (a, b) => a.time - b.time || a.midi - b.midi,
+  )) {
+    const current = groups[groups.length - 1];
+    if (!current || note.time - current[0].time >= tolerance) {
+      groups.push([note]);
+    } else {
+      current.push(note);
+    }
+  }
+  return groups;
+}
+
 function scaleFingerCost(
   midi: number,
   finger: number,
@@ -193,6 +213,16 @@ function anchorFor(midi: number, finger: number, hand: Hand) {
   return midi - direction * (finger - 1) * 1.75;
 }
 
+function isFingerCrossing(
+  pitchDelta: number,
+  fingerDelta: number,
+  hand: Hand,
+) {
+  if (pitchDelta === 0 || fingerDelta === 0) return false;
+  const handDirection = hand === "right" ? 1 : -1;
+  return Math.sign(pitchDelta) !== Math.sign(fingerDelta * handDirection);
+}
+
 function transitionCost(
   previous: RawNote,
   current: RawNote,
@@ -204,6 +234,23 @@ function transitionCost(
   const fingerDelta = finger - previousFinger;
   const handDirection = hand === "right" ? 1 : -1;
   const sameOnset = Math.abs(current.time - previous.time) < 0.045;
+  const crossing = isFingerCrossing(pitchDelta, fingerDelta, hand);
+
+  // Simultaneous notes must fit inside the maximum thumb-to-pinky span.
+  if (sameOnset && Math.abs(pitchDelta) > MAX_HAND_SPAN_SEMITONES) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  // A hand may pass at most two finger positions (for example 3 -> 1).
+  // Larger exchanges would require fingers to pass through one another.
+  if (
+    !sameOnset &&
+    crossing &&
+    Math.abs(fingerDelta) > MAX_CROSSING_FINGER_DISTANCE
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+
   let cost =
     Math.abs(
       anchorFor(current.midi, finger, hand) -
@@ -232,6 +279,57 @@ function transitionCost(
   if (sameOnset && finger === previousFinger) cost += 12;
 
   return cost;
+}
+
+function assignHandPositions(
+  notes: RawNote[],
+  fingers: Map<string, number>,
+  hand: Hand,
+) {
+  const positions = new Map<string, number>();
+  const orderedGroups = groupNotesByOnset(notes);
+  let currentAnchor: number | null = null;
+  let previousNote: RawNote | null = null;
+  let previousFinger: number | null = null;
+  let previousGroupWasSingle = false;
+
+  for (const group of orderedGroups) {
+    const ordered = [...group].sort((a, b) => a.midi - b.midi);
+    const thumbNote = ordered.find((note) => fingers.get(note.id) === 1);
+    const desiredAnchor = thumbNote
+      ? thumbNote.midi
+      : ordered.reduce(
+          (sum, note) =>
+            sum + anchorFor(note.midi, fingers.get(note.id) ?? 1, hand),
+          0,
+        ) / ordered.length;
+
+    const currentNote = ordered[0];
+    const currentFinger = fingers.get(currentNote.id) ?? 1;
+    const crossing =
+      ordered.length === 1 &&
+      previousGroupWasSingle &&
+      previousNote !== null &&
+      previousFinger !== null &&
+      isFingerCrossing(
+        currentNote.midi - previousNote.midi,
+        currentFinger - previousFinger,
+        hand,
+      );
+
+    // During a legal crossing, keep the old hand position so the moving finger
+    // actually passes under/over. The new anchor becomes active afterwards.
+    const poseAnchor =
+      crossing && currentAnchor !== null ? currentAnchor : desiredAnchor;
+    for (const note of ordered) positions.set(note.id, poseAnchor);
+
+    currentAnchor = desiredAnchor;
+    previousNote = ordered[ordered.length - 1];
+    previousFinger = fingers.get(previousNote.id) ?? 1;
+    previousGroupWasSingle = ordered.length === 1;
+  }
+
+  return positions;
 }
 
 function assignSequentialFingers(
@@ -293,14 +391,18 @@ function assignSequentialFingers(
 
   // Chords need distinct, ordered fingers. The DP above still supplies the
   // hand-position context; this pass enforces playable simultaneous shapes.
-  const onsetGroups = new Map<number, RawNote[]>();
-  for (const note of sorted) {
-    const onset = Math.round(note.time * 50);
-    onsetGroups.set(onset, [...(onsetGroups.get(onset) ?? []), note]);
-  }
-  for (const group of onsetGroups.values()) {
+  for (const group of groupNotesByOnset(sorted)) {
     if (group.length < 2) continue;
     const chord = [...group].sort((a, b) => a.midi - b.midi).slice(0, 5);
+    if (
+      chord[chord.length - 1].midi - chord[0].midi >
+      MAX_HAND_SPAN_SEMITONES
+    ) {
+      // There is no physically valid one-hand fingering for this chord.
+      // Keep the sequential solution instead of pretending that 1 and 5 can
+      // stretch beyond an octave.
+      continue;
+    }
     chord.forEach((note, index) => {
       const distributedFinger =
         chord.length === 2
@@ -349,6 +451,185 @@ function resolveTrackHands(
   return result;
 }
 
+/**
+ * A mixed piano track needs phrase-level continuity. A hard split at middle C
+ * makes neighbouring notes flicker between hands and can even alternate the
+ * same key. This onset-based assignment remembers pitch ownership, keeps short
+ * melodic phrases on one hand, and only changes hands for a rest, a large
+ * register jump, or a chord that benefits from being shared.
+ */
+function chooseStableSplitPitch(notes: RawNote[]) {
+  const groups = groupNotesByOnset(notes);
+  let bestPitch = 60;
+  let bestCost = Number.POSITIVE_INFINITY;
+
+  for (let splitPitch = 52; splitPitch <= 68; splitPitch += 1) {
+    let cost = Math.abs(splitPitch - 60) * 0.4;
+    let previousSingle: RawNote | null = null;
+
+    for (const group of groups) {
+      const left = group.filter((note) => note.midi < splitPitch);
+      const right = group.filter((note) => note.midi >= splitPitch);
+      for (const handNotes of [left, right]) {
+        if (handNotes.length < 2) continue;
+        const pitches = handNotes.map((note) => note.midi);
+        const span = Math.max(...pitches) - Math.min(...pitches);
+        if (span > MAX_HAND_SPAN_SEMITONES) {
+          cost += 500 + (span - MAX_HAND_SPAN_SEMITONES) * 40;
+        }
+      }
+
+      if (group.length === 1) {
+        const note = group[0];
+        if (previousSingle) {
+          const pause = note.time - previousSingle.time;
+          const leap = Math.abs(note.midi - previousSingle.midi);
+          const changedSide =
+            (note.midi < splitPitch) !==
+            (previousSingle.midi < splitPitch);
+          if (changedSide && pause < 1.15 && leap <= 12) {
+            cost += 35 + (1.15 - pause) * 25 + (12 - leap) * 1.5;
+          }
+        }
+        previousSingle = note;
+      } else {
+        previousSingle = null;
+      }
+    }
+
+    if (cost < bestCost) {
+      bestCost = cost;
+      bestPitch = splitPitch;
+    }
+  }
+
+  return bestPitch;
+}
+
+function assignCoherentSplitHands(notes: RawNote[]) {
+  const assignments = new Map<string, Hand>();
+  const orderedGroups = groupNotesByOnset(notes)
+    .map((group) => [...group].sort((a, b) => a.midi - b.midi))
+    .sort((a, b) => a[0].time - b[0].time);
+  const splitPitch = chooseStableSplitPitch(notes);
+  const handCenters: Record<Hand, number> = {
+    left: splitPitch - 10,
+    right: splitPitch + 10,
+  };
+  const pitchOwners = new Map<number, { hand: Hand; time: number }>();
+  let previousSingle:
+    | { hand: Hand; midi: number; time: number }
+    | null = null;
+
+  for (const group of orderedGroups) {
+    let best:
+      | { cost: number; left: RawNote[]; right: RawNote[] }
+      | null = null;
+
+    // A boundary in the pitch-sorted onset guarantees that the left hand
+    // never crosses above the right hand inside a chord.
+    for (let boundary = 0; boundary <= group.length; boundary += 1) {
+      if (
+        boundary > 0 &&
+        boundary < group.length &&
+        group[boundary - 1].midi === group[boundary].midi
+      ) {
+        // Duplicate/unison events represent one physical key and therefore
+        // must never be painted as two different hands.
+        continue;
+      }
+      const candidate = {
+        left: group.slice(0, boundary),
+        right: group.slice(boundary),
+      };
+      let cost = 0;
+
+      for (const hand of ["left", "right"] as const) {
+        const handNotes = candidate[hand];
+        if (handNotes.length === 0) continue;
+        const center =
+          handNotes.reduce((sum, note) => sum + note.midi, 0) /
+          handNotes.length;
+        const span =
+          handNotes[handNotes.length - 1].midi - handNotes[0].midi;
+
+        cost += Math.abs(center - handCenters[hand]) * 0.18;
+        if (handNotes.length > 5) {
+          cost += 100000 + (handNotes.length - 5) * 1000;
+        }
+        if (span > MAX_HAND_SPAN_SEMITONES) {
+          cost += 100000 + (span - MAX_HAND_SPAN_SEMITONES) * 1000;
+        }
+
+        for (const note of handNotes) {
+          const homeHand: Hand =
+            note.midi < splitPitch ? "left" : "right";
+          if (homeHand !== hand) {
+            // Stable pitch homes make the left/right boundary monotonic. The
+            // temporal rules may temporarily override it for a phrase, but a
+            // pitch cannot acquire contradictory owners in adjacent chords.
+            cost += 260 + Math.abs(note.midi - splitPitch) * 32;
+          }
+          cost +=
+            hand === "left"
+              ? Math.max(0, note.midi - splitPitch) * 0.38
+              : Math.max(0, splitPitch - note.midi) * 0.38;
+
+          const owner = pitchOwners.get(note.midi);
+          if (owner && owner.hand !== hand) {
+            const age = note.time - owner.time;
+            // Treat a recently repeated pitch as temporarily owned by its
+            // hand. This prevents the same lane from flashing left/right in
+            // dense arrangements while still allowing reassignment after a
+            // genuine phrase break.
+            if (age < 2.2) cost += 1000 + Math.max(0, 2.2 - age) * 20;
+          }
+
+          if (
+            group.length === 1 &&
+            previousSingle &&
+            previousSingle.hand !== hand
+          ) {
+            const pause = note.time - previousSingle.time;
+            const leap = Math.abs(note.midi - previousSingle.midi);
+            if (pause < 1.15 && leap <= 12) {
+              cost += 320 + (1.15 - pause) * 20 + (12 - leap);
+            }
+          }
+        }
+      }
+
+      if (!best || cost < best.cost) best = { cost, ...candidate };
+    }
+
+    if (!best) continue;
+    for (const hand of ["left", "right"] as const) {
+      const handNotes = best[hand];
+      if (handNotes.length === 0) continue;
+      handCenters[hand] =
+        handNotes.reduce((sum, note) => sum + note.midi, 0) /
+        handNotes.length;
+      for (const note of handNotes) {
+        assignments.set(note.id, hand);
+        pitchOwners.set(note.midi, { hand, time: note.time });
+      }
+    }
+
+    if (group.length === 1) {
+      const note = group[0];
+      previousSingle = {
+        hand: assignments.get(note.id) ?? "right",
+        midi: note.midi,
+        time: note.time,
+      };
+    } else {
+      previousSingle = null;
+    }
+  }
+
+  return assignments;
+}
+
 export function annotateForPractice(
   rawNotes: RawNote[],
   tracks: TrackInfo[],
@@ -361,11 +642,21 @@ export function annotateForPractice(
   const selectedNotes = rawNotes.filter((note) => selectedIds.has(note.trackId));
   const windows = analyzeHarmony(selectedNotes, ppq, beatsPerMeasure);
   const trackHands = resolveTrackHands(tracks);
+  const splitAssignments = new Map<string, Hand>();
+  for (const [trackId, assignment] of trackHands) {
+    if (assignment !== "split") continue;
+    const trackNotes = selectedNotes.filter((note) => note.trackId === trackId);
+    for (const [noteId, hand] of assignCoherentSplitHands(trackNotes)) {
+      splitAssignments.set(noteId, hand);
+    }
+  }
 
   const handed = selectedNotes.map((note) => {
     const assignment = trackHands.get(note.trackId) ?? "split";
     const hand: Hand =
-      assignment === "split" ? (note.midi < 60 ? "left" : "right") : assignment;
+      assignment === "split"
+        ? splitAssignments.get(note.id) ?? (note.midi < 60 ? "left" : "right")
+        : assignment;
     return { note, hand };
   });
   const leftFingers = assignSequentialFingers(
@@ -378,6 +669,14 @@ export function annotateForPractice(
     "right",
     windows,
   );
+  const leftNotes = handed
+    .filter(({ hand }) => hand === "left")
+    .map(({ note }) => note);
+  const rightNotes = handed
+    .filter(({ hand }) => hand === "right")
+    .map(({ note }) => note);
+  const leftPositions = assignHandPositions(leftNotes, leftFingers, "left");
+  const rightPositions = assignHandPositions(rightNotes, rightFingers, "right");
 
   const notes: PracticeNote[] = handed.map(({ note, hand }) => {
     const harmonicWindow = windowForNote(note, windows);
@@ -386,6 +685,9 @@ export function annotateForPractice(
       hand,
       finger:
         (hand === "left" ? leftFingers : rightFingers).get(note.id) ?? 1,
+      handPosition:
+        (hand === "left" ? leftPositions : rightPositions).get(note.id) ??
+        note.midi,
       harmonicKey: harmonicWindow.label,
       inScale: harmonicWindow.scalePitchClasses.has(note.midi % 12),
     };

@@ -19,6 +19,11 @@ export interface RawNote {
 export interface PracticeNote extends RawNote {
   hand: Hand;
   finger: number;
+  /**
+   * Thumb-side hand anchor in MIDI-note space. A crossing note keeps the
+   * previous anchor; the following note adopts the repositioned hand.
+   */
+  handPosition: number;
   harmonicKey: string;
   inScale: boolean;
 }
